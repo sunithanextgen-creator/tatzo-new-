@@ -1,0 +1,8 @@
+{
+  "projects": {
+    "default": "tatzo-as0711",
+    "prod": "tatzo-as0711"
+  },
+  "targets": {},
+  "etags": {}
+}

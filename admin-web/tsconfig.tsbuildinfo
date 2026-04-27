@@ -1,0 +1,1 @@
+{"root":["./src/app.tsx","./src/auth.ts","./src/firebase.ts","./src/main.tsx","./src/services.ts","./src/types.ts","./src/pages/adminlogin.tsx","./src/pages/pendingapplications.tsx","./src/pages/verificationdetail.tsx"],"version":"5.9.3"}

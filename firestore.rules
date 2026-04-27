@@ -1,0 +1,156 @@
+﻿rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && request.auth.token.admin == true;
+    }
+
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    function userPath(uid) {
+      return /databases/$(database)/documents/users/$(uid);
+    }
+
+    function userDoc(uid) {
+      return get(userPath(uid));
+    }
+
+    function userExists(uid) {
+      return exists(userPath(uid));
+    }
+
+    function userRole(uid) {
+      return userExists(uid) ? userDoc(uid).data.role : null;
+    }
+
+    function userStatus(uid) {
+      return userExists(uid) ? userDoc(uid).data.verificationStatus : null;
+    }
+
+    function isValidRole(role) {
+      return role in ['user', 'artist', 'dealer'];
+    }
+
+    function isValidVerificationStatus(status) {
+      return status in ['unsubmitted', 'pending', 'approved', 'rejected'];
+    }
+
+    function ownerRoleChangeAllowed() {
+      return request.resource.data.role == resource.data.role
+        || (!isValidRole(resource.data.role) && request.resource.data.role == 'user');
+    }
+
+    function ownerVerificationStatusChangeAllowed() {
+      return request.resource.data.verificationStatus == resource.data.verificationStatus
+        || (!isValidVerificationStatus(resource.data.verificationStatus)
+            && request.resource.data.verificationStatus == 'unsubmitted')
+        || (resource.data.verificationStatus in ['unsubmitted', 'rejected']
+            && request.resource.data.verificationStatus == 'pending');
+    }
+
+    function ownerLocationUnchangedWhenPending() {
+      return request.resource.data.locationCity == resource.data.locationCity
+        && request.resource.data.locationArea == resource.data.locationArea;
+    }
+
+    match /users/{userId} {
+      // Privacy: personal user profile is owner/admin only.
+      allow read: if isOwner(userId) || isAdmin();
+
+      allow create: if isOwner(userId) || isAdmin();
+
+      allow update: if isAdmin() || (
+        isOwner(userId)
+        && ownerRoleChangeAllowed()
+        && ownerVerificationStatusChangeAllowed()
+        && (resource.data.verificationStatus != 'pending' || ownerLocationUnchangedWhenPending())
+      );
+
+      allow delete: if isOwner(userId) || isAdmin();
+
+      match /notifications/{notificationId} {
+        allow read, update, delete: if isOwner(userId) || isAdmin();
+
+        // Social flow + admin system notifications.
+        allow create: if isAdmin() || (
+          isSignedIn()
+          && request.resource.data.toUid == userId
+          && request.resource.data.fromUid == request.auth.uid
+        );
+      }
+    }
+
+    match /verifications/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+
+      // Owner can submit/re-submit only while not pending/approved.
+      allow create, update: if isAdmin() || (
+        isOwner(userId)
+        && userExists(userId)
+        && (userStatus(userId) in ['unsubmitted', 'rejected'])
+        && request.resource.data.uid == userId
+        && request.resource.data.status == 'pending'
+      );
+
+      allow delete: if false;
+    }
+
+    match /artists/{userId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    match /dealers/{userId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    match /posts/{postId} {
+      allow read: if isSignedIn();
+      allow create, update: if isSignedIn();
+      allow delete: if false;
+
+      match /likes/{likeUid} {
+        allow read: if isSignedIn();
+        allow create, delete: if isOwner(likeUid);
+        allow update: if false;
+      }
+
+      match /shares/{shareUid} {
+        allow read: if isSignedIn();
+        allow create, delete: if isOwner(shareUid);
+        allow update: if false;
+      }
+    }
+
+    match /follows/{followId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && request.resource.data.fromUid == request.auth.uid;
+      allow delete: if isSignedIn() && resource.data.fromUid == request.auth.uid;
+      allow update: if false;
+    }
+
+    match /bookings/{bookingId} {
+      allow create: if isSignedIn() && request.resource.data.userUid == request.auth.uid;
+
+      allow read: if isAdmin() || (
+        isSignedIn()
+        && (resource.data.userUid == request.auth.uid || resource.data.artistUid == request.auth.uid)
+      );
+
+      allow update: if isAdmin() || (
+        isSignedIn()
+        && (resource.data.userUid == request.auth.uid || resource.data.artistUid == request.auth.uid)
+      );
+
+      allow delete: if false;
+    }
+  }
+}
