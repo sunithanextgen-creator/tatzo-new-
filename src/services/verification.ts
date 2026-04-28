@@ -1,6 +1,6 @@
 ﻿import { doc, serverTimestamp, writeBatch } from 'firebase/firestore';
 import { db } from '../config/firebaseConfig';
-import type { RequestedRole, VerificationStatus } from '../types/app';
+import type { RequestedRole } from '../types/app';
 
 type SubmitVerificationApplicationParams = {
   uid: string;
@@ -17,7 +17,7 @@ type SubmitVerificationApplicationParams = {
   // Trust/KYC (v1)
   // Mandatory: Aadhar/PAN text. Certificates are optional.
   idProof: string;
-  portfolioLink: string;
+  portfolioLink?: string;
   certStoragePaths?: string[];
 
   // Financials (v1 strings)
@@ -66,7 +66,7 @@ export const submitVerificationApplication = async (params: SubmitVerificationAp
     {
       uid,
       requestedRole,
-      status: 'pending' as VerificationStatus,
+      status: 'approved',
 
       locationCity: city,
       locationArea: area,
@@ -80,6 +80,8 @@ export const submitVerificationApplication = async (params: SubmitVerificationAp
       bankDetails: String(bankDetails || '').trim(),
 
       submittedAt: serverTimestamp(),
+      reviewedAt: serverTimestamp(),
+      reviewedBy: uid,
       updatedAt: serverTimestamp(),
       createdAt: serverTimestamp(),
     },
@@ -89,9 +91,15 @@ export const submitVerificationApplication = async (params: SubmitVerificationAp
   batch.set(
     doc(db, 'users', uid),
     {
-      requestedRole,
-      verificationStatus: 'pending' as VerificationStatus,
+      uid,
+      role: requestedRole,
+      requestedRole: null,
+      verificationStatus: 'approved',
       verificationRejectReason: '',
+      verifiedPro: requestedRole === 'artist',
+      authorizedSeller: requestedRole === 'dealer',
+      isProfileComplete: true,
+      setupComplete: true,
       verificationUpdatedAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     },

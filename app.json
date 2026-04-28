@@ -8,6 +8,10 @@
     "platforms": ["ios", "android", "web"],
     "assetBundlePatterns": ["**/*"],
     "scheme": "tatzo-new",
+    "android": {
+      "package": "com.sunitha.tatzo",
+      "googleServicesFile": "./android/app/google-services.json"
+    },
     "experiments": {
       "newArchEnabled": false
     }

@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "291673704185",
+    "project_id": "tatzo-as0711",
+    "storage_bucket": "tatzo-as0711.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:291673704185:android:1d4b6babd3f2d2e0130428",
+        "android_client_info": {
+          "package_name": "com.sunitha.tatzo"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAtl936Mkw89jaFhZNbJ_fxEGfgbzMsnq4"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

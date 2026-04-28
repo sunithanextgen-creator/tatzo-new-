@@ -44,7 +44,12 @@ service cloud.firestore {
 
     function ownerRoleChangeAllowed() {
       return request.resource.data.role == resource.data.role
-        || (!isValidRole(resource.data.role) && request.resource.data.role == 'user');
+        || (!isValidRole(resource.data.role) && request.resource.data.role == 'user')
+        || (
+          resource.data.role == 'user'
+          && request.resource.data.role in ['artist', 'dealer']
+          && request.resource.data.verificationStatus == 'approved'
+        );
     }
 
     function ownerVerificationStatusChangeAllowed() {
@@ -52,7 +57,7 @@ service cloud.firestore {
         || (!isValidVerificationStatus(resource.data.verificationStatus)
             && request.resource.data.verificationStatus == 'unsubmitted')
         || (resource.data.verificationStatus in ['unsubmitted', 'rejected']
-            && request.resource.data.verificationStatus == 'pending');
+            && request.resource.data.verificationStatus in ['pending', 'approved']);
     }
 
     function ownerLocationUnchangedWhenPending() {
@@ -96,7 +101,7 @@ service cloud.firestore {
         && userExists(userId)
         && (userStatus(userId) in ['unsubmitted', 'rejected'])
         && request.resource.data.uid == userId
-        && request.resource.data.status == 'pending'
+        && request.resource.data.status in ['pending', 'approved']
       );
 
       allow delete: if false;
@@ -104,12 +109,20 @@ service cloud.firestore {
 
     match /artists/{userId} {
       allow read: if isSignedIn();
-      allow write: if isAdmin();
+      allow write: if isAdmin() || (
+        isOwner(userId)
+        && userRole(userId) == 'artist'
+        && userStatus(userId) == 'approved'
+      );
     }
 
     match /dealers/{userId} {
       allow read: if isSignedIn();
-      allow write: if isAdmin();
+      allow write: if isAdmin() || (
+        isOwner(userId)
+        && userRole(userId) == 'dealer'
+        && userStatus(userId) == 'approved'
+      );
     }
 
     match /posts/{postId} {

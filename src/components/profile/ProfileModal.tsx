@@ -15,9 +15,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { updateProfile } from 'firebase/auth';
-import * as DocumentPicker from 'expo-document-picker';
-import { ref as storageRef, uploadBytes } from 'firebase/storage';
-import { auth, storage } from '../../config/firebaseConfig';
+import { auth } from '../../config/firebaseConfig';
 import { useAppTheme } from '../../theme/useAppTheme';
 import type { AppTheme } from '../../theme/theme';
 import type { RequestedRole, UserProfile, UserRole, VerificationStatus } from '../../types/app';
@@ -42,8 +40,6 @@ type ApplyDraft = {
   upiId: string;
   bankDetails: string;
 };
-
-type CertAsset = { uri: string; name: string; mimeType?: string | null; size?: number | null };
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -79,7 +75,6 @@ const ProfileModal = ({ visible, onClose, onSignOut }: ProfileModalProps) => {
     upiId: '',
     bankDetails: '',
   });
-  const [certAssets, setCertAssets] = useState<CertAsset[]>([]);
 
   const role: UserRole = (profile?.role ?? 'user') as UserRole;
   const verificationStatus: VerificationStatus = (profile?.verificationStatus ?? 'unsubmitted') as VerificationStatus;
@@ -95,7 +90,6 @@ const ProfileModal = ({ visible, onClose, onSignOut }: ProfileModalProps) => {
     setApplyOpen(false);
     setLocationEditorOpen(false);
     setPendingApplyRole(null);
-    setCertAssets([]);
 
     if (!uid) {
       setProfile(null);
@@ -154,7 +148,6 @@ const ProfileModal = ({ visible, onClose, onSignOut }: ProfileModalProps) => {
     setApplyOpen(false);
     setLocationEditorOpen(false);
     setPendingApplyRole(null);
-    setCertAssets([]);
     onClose();
   };
 
@@ -220,49 +213,6 @@ const ProfileModal = ({ visible, onClose, onSignOut }: ProfileModalProps) => {
     }
   };
 
-  
-  const sanitizeFileName = (name: string) =>
-    String(name || 'certificate')
-      .replace(/[^a-zA-Z0-9._-]+/g, '_')
-      .slice(0, 80);
-
-  const pickCertificates = async () => {
-    try {
-      const r = await DocumentPicker.getDocumentAsync({
-        type: ['application/pdf', 'image/*'],
-        multiple: true,
-        copyToCacheDirectory: true,
-      });
-
-      // expo-document-picker returns { canceled, assets }
-      if ((r as any)?.canceled) return;
-      const assets = ((r as any)?.assets ?? []) as Array<any>;
-      const mapped: CertAsset[] = assets
-        .filter((a) => a?.uri)
-        .map((a) => ({
-          uri: String(a.uri),
-          name: sanitizeFileName(String(a.name ?? 'certificate')),
-          mimeType: (a.mimeType ?? null) as any,
-          size: (a.size ?? null) as any,
-        }));
-
-      if (!mapped.length) {
-        Alert.alert('Tatzo', 'No files selected.');
-        return;
-      }
-
-      setCertAssets((prev) => {
-        const next = [...prev];
-        for (const m of mapped) {
-          // De-dupe by uri
-          if (!next.some((x) => x.uri === m.uri)) next.push(m);
-        }
-        return next;
-      });
-    } catch {
-      Alert.alert('Tatzo', 'Could not pick certificate files.');
-    }
-  };
 const openApply = (nextRole: RequestedRole) => {
     if (verificationStatus === 'pending') return;
 
@@ -306,28 +256,6 @@ const openApply = (nextRole: RequestedRole) => {
 
     setApplySubmitting(true);
     try {
-      const certStoragePaths: string[] = [];
-      if (certAssets.length) {
-        try {
-          for (const asset of certAssets) {
-            const safeName = sanitizeFileName(asset.name);
-            const path = `verifications/${uid}/certs/${Date.now()}_${safeName}`;
-            const blob = await (await fetch(asset.uri)).blob();
-
-            await uploadBytes(
-              storageRef(storage, path),
-              blob,
-              asset.mimeType ? ({ contentType: asset.mimeType } as any) : undefined,
-            );
-
-            certStoragePaths.push(path);
-          }
-        } catch {
-          // Certificates are optional: don't block verification submission.
-          Alert.alert('Tatzo', 'Certificate upload failed. Continuing without certificates.');
-        }
-      }
-
       await submitVerificationApplication({
         uid,
         requestedRole: applyRole,
@@ -337,20 +265,23 @@ const openApply = (nextRole: RequestedRole) => {
         businessEmail,
         idProof,
         portfolioLink: applyDraft.portfolioLink.trim(),
-        certStoragePaths,
+        certStoragePaths: [],
         upiId: applyDraft.upiId.trim(),
         bankDetails: applyDraft.bankDetails.trim(),
       });
 
       patchLocalProfile({
-        requestedRole: applyRole,
-        verificationStatus: 'pending',
+        role: applyRole,
+        requestedRole: null,
+        verificationStatus: 'approved',
         verificationRejectReason: '',
+        verifiedPro: applyRole === 'artist',
+        authorizedSeller: applyRole === 'dealer',
+        isProfileComplete: true,
       });
 
       setApplyOpen(false);
-      setCertAssets([]);
-      Alert.alert('Tatzo', 'Verification submitted. Your suite will unlock after admin approval.');
+      Alert.alert('Tatzo', `${applyRole === 'artist' ? 'Artist' : 'Dealer'} suite activated successfully.`);
     } catch (e: any) {
       Alert.alert('Tatzo', e?.code ? `${e.code}: ${e?.message ?? ''}` : (e?.message ?? 'Could not submit application.'));
     } finally {
@@ -497,7 +428,7 @@ const openApply = (nextRole: RequestedRole) => {
                 </Pressable>
 
                 {verificationStatus === 'pending' ? (
-                  <Text style={styles.pendingNote}>Verification is in progress. We will unlock your suite after approval.</Text>
+                  <Text style={styles.pendingNote}>Verification is in progress.</Text>
                 ) : null}
               </View>
             ) : (
@@ -546,7 +477,7 @@ const openApply = (nextRole: RequestedRole) => {
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
           >
-            <Text style={styles.note}>Submit your professional details. Admin will review and approve.</Text>
+            <Text style={styles.note}>Submit your professional details to activate your suite instantly.</Text>
 
             <View style={styles.row}>
               <Text style={styles.label}>Shop / Studio Name</Text>
@@ -582,7 +513,7 @@ const openApply = (nextRole: RequestedRole) => {
             </View>
 
             <View style={styles.row}>
-              <Text style={styles.label}>Portfolio Link</Text>
+              <Text style={styles.label}>Portfolio Link (Optional)</Text>
               <TextInput
                 value={applyDraft.portfolioLink}
                 onChangeText={(t) => setApplyDraft((d) => ({ ...d, portfolioLink: t }))}
@@ -590,30 +521,6 @@ const openApply = (nextRole: RequestedRole) => {
                 autoCapitalize="none"
                 nativeID="applyPortfolio"
               />
-            </View>
-
-            <View style={styles.row}>
-              <Text style={styles.label}>Certificates (Optional)</Text>
-              <Pressable onPress={pickCertificates} style={styles.uploadBtn} accessibilityRole="button">
-                <Ionicons name="cloud-upload-outline" size={18} color={theme.colors.accent} />
-                <Text style={styles.uploadBtnText}>Add Certificates</Text>
-              </Pressable>
-              {certAssets.length ? (
-                <View style={styles.fileList}>
-                  {certAssets.map((f) => (
-                    <View key={f.uri} style={styles.fileRow}>
-                      <Text numberOfLines={1} style={styles.fileName}>
-                        {f.name}
-                      </Text>
-                      <Pressable onPress={() => setCertAssets((prev) => prev.filter((x) => x.uri !== f.uri))} style={styles.fileRemove}>
-                        <Ionicons name="close" size={14} color={theme.colors.textMuted} />
-                      </Pressable>
-                    </View>
-                  ))}
-                </View>
-              ) : (
-                <Text style={styles.helper}>You can skip this for now. PDF/JPG/PNG supported.</Text>
-              )}
             </View>
 
             <View style={styles.row}>
@@ -643,7 +550,7 @@ const openApply = (nextRole: RequestedRole) => {
               style={[styles.saveBtn, applySubmitting && styles.saveBtnDisabled]}
               accessibilityRole="button"
             >
-              <Text style={styles.saveText}>{applySubmitting ? 'Submitting...' : 'Submit for Review'}</Text>
+              <Text style={styles.saveText}>{applySubmitting ? 'Submitting...' : 'Activate Suite'}</Text>
             </Pressable>
           </ScrollView>
         </KeyboardAvoidingView>

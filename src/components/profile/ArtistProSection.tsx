@@ -81,7 +81,7 @@ const ArtistProSection = ({ uid, role, profile, onPatchProfile }: ArtistProSecti
         </View>
 
         <Text style={styles.cardSub} numberOfLines={2}>
-          Verification is approved by admin. If you need changes, contact support.
+          Verification is completed. Keep your profile details up to date for better trust.
         </Text>
       </View>
 
