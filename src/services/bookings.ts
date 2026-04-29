@@ -118,23 +118,6 @@ export const createBooking = async (input: CreateBookingInput) => {
   return { id, alreadyExists: false as const };
 };
 
-export const markBookingPaidSimulated = async (bookingId: string, amount: number = 249) => {
-  const ref = doc(db, 'bookings', bookingId);
-
-  await updateDoc(ref, {
-    status: 'pending_artist_approval' as BookingStatus,
-    payment: {
-      provider: 'razorpay',
-      status: 'simulated_paid',
-      amount,
-      at: serverTimestamp(),
-    },
-    updatedAt: serverTimestamp(),
-  });
-
-  await notifyArtistAfterPayment(bookingId, amount);
-};
-
 export const markBookingPaidRazorpay = async (params: {
   bookingId: string;
   orderId: string;

@@ -14,7 +14,7 @@ const ArtistShopPanel = () => {
 
       <View style={styles.card}>
         <Text style={styles.cardTitle}>Subscription</Text>
-        <Text style={styles.line}>Tatzo Pro: Rs. 1499 / month (simulated for now)</Text>
+        <Text style={styles.line}>Tatzo Pro: Rs. 1499 / month (Razorpay live billing)</Text>
       </View>
 
       <View style={styles.card}>

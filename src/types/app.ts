@@ -42,7 +42,7 @@ export type UserProfile = {
   authorizedSeller?: boolean;
   verificationUpdatedAt?: unknown;
 
-  // Subscription (simulated for now)
+  // Subscription state
   subscriptionStatus?: 'inactive' | 'active';
   subscriptionPlan?: 'tatzo_pro';
   subscriptionExpiresAt?: unknown;

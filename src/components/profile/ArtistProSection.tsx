@@ -1,11 +1,9 @@
-﻿import React, { useMemo, useState } from 'react';
-import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from 'react-native';
+import React, { useMemo } from 'react';
+import { StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { auth } from '../../config/firebaseConfig';
 import { useAppTheme } from '../../theme/useAppTheme';
 import type { AppTheme } from '../../theme/theme';
 import type { UserProfile, UserRole } from '../../types/app';
-import { syncUserProfile } from '../../services/userProfile';
 
 type ArtistProSectionProps = {
   uid: string | null;
@@ -21,49 +19,17 @@ const statusCopy = (status: UserProfile['verificationStatus']): { label: string;
   return { label: 'UNSUBMITTED', tone: 'muted' };
 };
 
-const ArtistProSection = ({ uid, role, profile, onPatchProfile }: ArtistProSectionProps) => {
+const ArtistProSection = ({ uid, role, profile }: ArtistProSectionProps) => {
   const { theme } = useAppTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
-  const [updating, setUpdating] = useState(false);
 
   if (!uid) return null;
   if (role !== 'artist' && role !== 'dealer') return null;
 
   const v = statusCopy(profile?.verificationStatus ?? 'unsubmitted');
   const verifyLabel = role === 'dealer' ? 'Authorized Seller' : 'Verified Pro';
-
-  const handleActivatePro = async () => {
-    if (!auth.currentUser) return;
-    setUpdating(true);
-    try {
-      const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
-      await syncUserProfile(auth.currentUser, {
-        subscriptionStatus: 'active',
-        subscriptionPlan: 'tatzo_pro',
-        subscriptionExpiresAt: expiresAt,
-      });
-      onPatchProfile({ subscriptionStatus: 'active', subscriptionPlan: 'tatzo_pro', subscriptionExpiresAt: expiresAt });
-      Alert.alert('Tatzo', 'Tatzo Pro activated (simulated).');
-    } catch (e: any) {
-      Alert.alert('Tatzo', e?.message ?? 'Could not update subscription.');
-    } finally {
-      setUpdating(false);
-    }
-  };
-
-  const handleMarkPayoutReady = async () => {
-    if (!auth.currentUser) return;
-    setUpdating(true);
-    try {
-      await syncUserProfile(auth.currentUser, { payoutStatus: 'ready' });
-      onPatchProfile({ payoutStatus: 'ready' });
-      Alert.alert('Tatzo', 'Payout setup marked ready (simulated).');
-    } catch (e: any) {
-      Alert.alert('Tatzo', e?.message ?? 'Could not update payout setup.');
-    } finally {
-      setUpdating(false);
-    }
-  };
+  const subscriptionStatus = profile?.subscriptionStatus === 'active' ? 'ACTIVE' : 'PENDING';
+  const payoutStatus = (profile?.payoutStatus ?? 'unconfigured').toUpperCase();
 
   return (
     <View style={styles.section}>
@@ -81,7 +47,7 @@ const ArtistProSection = ({ uid, role, profile, onPatchProfile }: ArtistProSecti
         </View>
 
         <Text style={styles.cardSub} numberOfLines={2}>
-          Verification is completed. Keep your profile details up to date for better trust.
+          Verification and compliance status from admin review.
         </Text>
       </View>
 
@@ -91,18 +57,12 @@ const ArtistProSection = ({ uid, role, profile, onPatchProfile }: ArtistProSecti
             <Ionicons name="sparkles-outline" size={18} color={theme.colors.accent} />
             <Text style={styles.cardTitle}>Subscription</Text>
           </View>
-          <Text style={styles.miniValue}>{profile?.subscriptionStatus === 'active' ? 'ACTIVE' : 'INACTIVE'}</Text>
+          <Text style={styles.miniValue}>{subscriptionStatus}</Text>
         </View>
 
-        <Text style={styles.cardSub} numberOfLines={2}>
-          Tatzo Pro (Rs.1499/month) will be enabled later with real payments. For now, this is simulated.
+        <Text style={styles.cardSub} numberOfLines={3}>
+          Tatzo Pro (Rs.1499/month). Billing will reflect after Razorpay live subscription setup is completed.
         </Text>
-
-        <View style={styles.cardActions}>
-          <Pressable disabled={updating} onPress={handleActivatePro} style={[styles.smallBtn, updating && styles.smallBtnDisabled]}>
-            {updating ? <ActivityIndicator color={theme.colors.textInverse} /> : <Text style={styles.smallBtnText}>Activate (Simulated)</Text>}
-          </Pressable>
-        </View>
       </View>
 
       <View style={styles.card}>
@@ -111,18 +71,12 @@ const ArtistProSection = ({ uid, role, profile, onPatchProfile }: ArtistProSecti
             <Ionicons name="cash-outline" size={18} color={theme.colors.accent} />
             <Text style={styles.cardTitle}>Payout Setup</Text>
           </View>
-          <Text style={styles.miniValue}>{profile?.payoutStatus ?? 'unconfigured'}</Text>
+          <Text style={styles.miniValue}>{payoutStatus}</Text>
         </View>
 
-        <Text style={styles.cardSub} numberOfLines={2}>
-          Razorpay onboarding needs a secure backend. We'll wire it after you host the server.
+        <Text style={styles.cardSub} numberOfLines={3}>
+          Payout onboarding is controlled via secure backend and admin approval flow.
         </Text>
-
-        <View style={styles.cardActions}>
-          <Pressable disabled={updating} onPress={handleMarkPayoutReady} style={[styles.smallBtn, updating && styles.smallBtnDisabled]}>
-            {updating ? <ActivityIndicator color={theme.colors.textInverse} /> : <Text style={styles.smallBtnText}>Mark Ready (Simulated)</Text>}
-          </Pressable>
-        </View>
       </View>
     </View>
   );
@@ -204,25 +158,6 @@ const createStyles = (theme: AppTheme) =>
       fontSize: 10,
       fontWeight: '900',
       letterSpacing: 1,
-    },
-    cardActions: {
-      flexDirection: 'row',
-      justifyContent: 'flex-end',
-    },
-    smallBtn: {
-      paddingVertical: 10,
-      paddingHorizontal: 12,
-      borderRadius: 14,
-      backgroundColor: theme.colors.accentStrong,
-    },
-    smallBtnDisabled: {
-      opacity: 0.65,
-    },
-    smallBtnText: {
-      color: theme.colors.textInverse,
-      fontSize: 12,
-      fontWeight: '900',
-      letterSpacing: 0.4,
     },
   });
 

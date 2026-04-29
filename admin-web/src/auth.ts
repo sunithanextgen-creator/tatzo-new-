@@ -17,7 +17,6 @@ export const loginAdmin = async (email: string, password: string) => {
   const { isAdmin } = await getAdminToken(cred.user, true);
 
   if (!isAdmin) {
-    await signOut(auth);
     throw new Error('This account is not an admin. Set custom claim admin=true first.');
   }
 
