@@ -7,7 +7,10 @@
     "ios": "expo run:ios",
     "admin:dev": "npm --prefix admin-web run dev",
     "admin:build": "npm --prefix admin-web run build",
-    "set-admin-claim": "node scripts/set-admin-claim.js"
+    "set-admin-claim": "node scripts/set-admin-claim.js",
+    "check-admin-claim": "node scripts/check-admin-claim.js",
+    "set-user-password": "node scripts/set-user-password.js",
+    "delete-auth-user": "node scripts/delete-auth-user.js"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",
