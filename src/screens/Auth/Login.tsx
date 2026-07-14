@@ -1,9 +1,10 @@
 ﻿import React, { useMemo, useState } from 'react';
-import { useNavigation } from '@react-navigation/native';
+import { RouteProp, useNavigation, useRoute } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import {
   ActivityIndicator,
   Alert,
+  Image,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -27,8 +28,10 @@ import { syncUserProfile } from '../../services/userProfile';
 import { createResponsiveShadow } from '../../utils/responsiveShadow';
 import { useAppTheme } from '../../theme/useAppTheme';
 import type { AppTheme } from '../../theme/theme';
+import { ANALYTICS_EVENTS, identifyAnalyticsUser, trackAnalyticsEvent } from '../../services/analytics/analytics';
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const TATZO_ROLE_LOGO = require('../../../assets/tatzo-role-logo.png');
 
 const Login = () => {
   const { theme } = useAppTheme();
@@ -47,7 +50,17 @@ const Login = () => {
   const [resetEmail, setResetEmail] = useState('');
   const [resetLoading, setResetLoading] = useState(false);
 
+  const route = useRoute<RouteProp<RootStackParamList, 'Login'>>();
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
+  const signUpRole = route.params?.role ?? 'user';
+  const isArtistRole = signUpRole === 'artist';
+  const roleLabel = isArtistRole ? 'Artist' : 'User';
+  const titleText = isArtistRole ? 'Welcome Artist' : 'Welcome to Tatzo';
+  const subtitleText = isArtistRole ? 'Showcase your work and manage bookings' : 'Find your next tattoo artist';
+  const primaryActionText = isSignUp ? `Create ${roleLabel} Account` : `Login as ${roleLabel}`;
+  const secondaryToggleText = isSignUp ? 'Already have an account? Login' : `Create ${roleLabel} Account`;
+  const oppositeRole = isArtistRole ? 'user' : 'artist';
+  const roleSwitchText = isArtistRole ? 'Are you a user? Login as User' : 'Are you an artist? Login as Artist';
 
   const goToDashboard = (role: UserRole) => {
     navigation.reset({ index: 0, routes: [{ name: resolveDashboardRoute(role) }] });
@@ -149,7 +162,7 @@ const Login = () => {
         try {
           await syncUserProfile(userCredential.user, {
             displayName: fullName.trim(),
-            role: 'user',
+            role: signUpRole,
             setupComplete: true,
             requestedRole: null,
             verificationStatus: 'unsubmitted',
@@ -170,7 +183,18 @@ const Login = () => {
           }
         }
 
-        goToDashboard('user');
+        const createdRole = signUpRole === 'artist' ? 'artist' : 'user';
+        await identifyAnalyticsUser(userCredential.user.uid, {
+          user_role: createdRole,
+          verification_status: 'unsubmitted',
+          founding_plan: null,
+          launch_city_cohort: 'unknown',
+        });
+        await trackAnalyticsEvent(
+          createdRole === 'artist' ? ANALYTICS_EVENTS.ARTIST_SIGNUP : ANALYTICS_EVENTS.SIGNUP,
+          { method: 'email_password', user_role: createdRole },
+        );
+        goToDashboard(signUpRole as UserRole);
         return;
       }
 
@@ -222,13 +246,10 @@ const Login = () => {
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.keyboardWrap}>
         <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
           <View style={styles.brandBlock}>
-            <View style={styles.brandMark}>
-              <Text style={styles.brandMarkText}>T</Text>
-            </View>
-            <Text style={styles.brandName}>Tatzo</Text>
+            <Image source={TATZO_ROLE_LOGO} style={styles.logoImage} resizeMode="contain" />
+            <Text style={styles.headline}>{titleText}</Text>
+            <Text style={styles.subheadline}>{subtitleText}</Text>
           </View>
-
-          <Text style={styles.headline}>{isSignUp ? 'Sign up.' : 'Log in.'}</Text>
 
           <View style={styles.card}>
             <View style={styles.segmentRow}>
@@ -256,7 +277,7 @@ const Login = () => {
                 autoCorrect={false}
                 keyboardType="email-address"
                 onChangeText={setEmail}
-                placeholder="artist@tatzo.com"
+                placeholder={isArtistRole ? 'artist@tatzo.com' : 'you@email.com'}
                 placeholderTextColor={theme.colors.textMuted}
                 style={styles.input}
                 value={email}
@@ -329,15 +350,23 @@ const Login = () => {
                 {isLoading ? (
                   <ActivityIndicator color={theme.colors.textInverse} />
                 ) : (
-                  <Text style={styles.ctaText}>{isSignUp ? 'Create account' : 'Continue'}</Text>
+                  <Text style={styles.ctaText}>{primaryActionText}</Text>
                 )}
               </LinearGradient>
             </TouchableOpacity>
 
             <TouchableOpacity activeOpacity={0.8} onPress={() => setIsSignUp((prev) => !prev)} style={styles.switchLink}>
               <Text style={styles.switchLinkText}>
-                {isSignUp ? 'Already have an account? Log in' : 'New here? Create an account'}
+                {secondaryToggleText}
               </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              activeOpacity={0.8}
+              onPress={() => navigation.replace('Login', { role: oppositeRole })}
+              style={styles.roleSwitchLink}
+            >
+              <Text style={styles.roleSwitchText}>{roleSwitchText}</Text>
             </TouchableOpacity>
           </View>
         </ScrollView>
@@ -383,18 +412,18 @@ const createStyles = (theme: AppTheme) =>
   StyleSheet.create({
     safeArea: {
       flex: 1,
-      backgroundColor: theme.colors.background,
+      backgroundColor: '#000000',
     },
     keyboardWrap: {
       flex: 1,
     },
     scrollContent: {
       flexGrow: 1,
-      paddingHorizontal: 18,
-      paddingTop: 28,
-      paddingBottom: 28,
+      paddingHorizontal: 20,
+      paddingTop: 24,
+      paddingBottom: 26,
       justifyContent: 'center',
-      gap: 16,
+      gap: 14,
     },
     backgroundGlowTop: {
       position: 'absolute',
@@ -403,7 +432,7 @@ const createStyles = (theme: AppTheme) =>
       width: 220,
       height: 220,
       borderRadius: 110,
-      backgroundColor: theme.mode === 'light' ? 'rgba(122, 92, 255, 0.08)' : 'rgba(122, 92, 255, 0.12)',
+      backgroundColor: 'transparent',
     },
     backgroundGlowBottom: {
       position: 'absolute',
@@ -412,76 +441,65 @@ const createStyles = (theme: AppTheme) =>
       width: 240,
       height: 240,
       borderRadius: 120,
-      backgroundColor: theme.mode === 'light' ? 'rgba(122, 92, 255, 0.06)' : 'rgba(122, 92, 255, 0.08)',
+      backgroundColor: 'transparent',
     },
     brandBlock: {
       alignItems: 'center',
-      gap: 10,
+      gap: 8,
     },
-    brandMark: {
-      width: 52,
-      height: 52,
-      borderRadius: 16,
-      backgroundColor: theme.mode === 'light' ? 'rgba(11, 11, 15, 0.04)' : 'rgba(255, 255, 255, 0.06)',
-      borderWidth: 1,
-      borderColor: theme.colors.border,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    brandMarkText: {
-      color: theme.mode === 'light' ? theme.colors.text : theme.colors.textInverse,
-      fontSize: 22,
-      fontWeight: '800',
-      letterSpacing: 1,
-    },
-    brandName: {
-      color: theme.colors.accent,
-      fontSize: 15,
-      fontWeight: '800',
-      letterSpacing: 3,
-      textTransform: 'uppercase',
+    logoImage: {
+      width: 138,
+      height: 138,
     },
     headline: {
-      color: theme.mode === 'light' ? theme.colors.text : theme.colors.textInverse,
-      fontSize: 34,
-      lineHeight: 40,
-      fontFamily: theme.fonts.display,
+      color: '#FFFFFF',
+      fontSize: 28,
+      lineHeight: 34,
+      fontWeight: '900',
       textAlign: 'center',
     },
+    subheadline: {
+      color: '#A1A1AA',
+      fontSize: 14,
+      lineHeight: 20,
+      fontWeight: '700',
+      textAlign: 'center',
+      marginTop: -2,
+    },
     card: {
-      backgroundColor: theme.colors.surface,
-      borderRadius: 28,
+      backgroundColor: 'rgba(15, 15, 18, 0.96)',
+      borderRadius: 24,
       borderWidth: 1,
-      borderColor: theme.colors.border,
-      padding: 18,
-      gap: 16,
+      borderColor: 'rgba(0, 212, 255, 0.14)',
+      padding: 16,
+      gap: 14,
       ...createResponsiveShadow({
-        web: theme.mode === 'light' ? '0px 16px 24px rgba(5, 10, 20, 0.14)' : '0px 16px 24px rgba(0, 0, 0, 0.22)',
+        web: '0px 16px 24px rgba(0, 0, 0, 0.22)',
         native: {
-          shadowColor: theme.mode === 'light' ? 'rgba(5, 10, 20, 0.18)' : '#000',
+          shadowColor: '#000',
           shadowOffset: { width: 0, height: 16 },
-          shadowOpacity: theme.mode === 'light' ? 0.14 : 0.22,
+          shadowOpacity: 0.2,
           shadowRadius: 24,
-          elevation: 8,
+          elevation: 6,
         },
       }),
     },
     segmentRow: {
       flexDirection: 'row',
-      backgroundColor: theme.mode === 'light' ? 'rgba(11, 11, 15, 0.04)' : theme.colors.surfaceMuted,
+      backgroundColor: 'rgba(255, 255, 255, 0.035)',
       borderRadius: 999,
       padding: 4,
       borderWidth: 1,
-      borderColor: theme.colors.border,
+      borderColor: 'rgba(255, 255, 255, 0.08)',
     },
     segmentButton: {
       flex: 1,
       borderRadius: 999,
-      paddingVertical: 12,
+      paddingVertical: 10,
       alignItems: 'center',
     },
     segmentButtonActive: {
-      backgroundColor: theme.mode === 'light' ? 'rgba(122, 92, 255, 0.1)' : 'rgba(255, 255, 255, 0.08)',
+      backgroundColor: 'rgba(0, 212, 255, 0.10)',
       ...createResponsiveShadow({
         web: theme.mode === 'light' ? '0px 0px 10px rgba(5, 10, 20, 0.06)' : '0px 0px 10px rgba(0, 0, 0, 0.08)',
         native: {
@@ -499,13 +517,13 @@ const createStyles = (theme: AppTheme) =>
       fontWeight: '700',
     },
     segmentTextActive: {
-      color: theme.mode === 'light' ? theme.colors.text : theme.colors.textInverse,
+      color: '#FFFFFF',
     },
     fieldGroup: {
       gap: 10,
     },
     label: {
-      color: theme.mode === 'light' ? theme.colors.text : theme.colors.textInverse,
+      color: '#FFFFFF',
       fontSize: 14,
       fontWeight: '700',
     },
@@ -528,26 +546,26 @@ const createStyles = (theme: AppTheme) =>
       borderColor: theme.colors.border,
     },
     input: {
-      backgroundColor: theme.mode === 'light' ? 'rgba(11, 11, 15, 0.04)' : 'rgba(255, 255, 255, 0.04)',
-      borderRadius: 18,
+      backgroundColor: 'rgba(255, 255, 255, 0.045)',
+      borderRadius: 16,
       borderWidth: 1,
-      borderColor: theme.colors.border,
+      borderColor: 'rgba(255, 255, 255, 0.10)',
       paddingHorizontal: 16,
-      paddingVertical: 15,
-      color: theme.mode === 'light' ? theme.colors.text : theme.colors.textInverse,
-      fontSize: 16,
+      paddingVertical: 14,
+      color: '#FFFFFF',
+      fontSize: 15,
     },
     ctaWrap: {
       marginTop: 4,
     },
     ctaButton: {
-      borderRadius: 20,
-      paddingVertical: 17,
+      borderRadius: 18,
+      paddingVertical: 15,
       alignItems: 'center',
     },
     ctaText: {
-      color: theme.mode === 'light' ? '#0B0B0F' : theme.colors.textInverse,
-      fontSize: 16,
+      color: '#FFFFFF',
+      fontSize: 15,
       fontWeight: '800',
     },
     switchLink: {
@@ -558,6 +576,15 @@ const createStyles = (theme: AppTheme) =>
       color: theme.colors.accent,
       fontSize: 13,
       fontWeight: '700',
+    },
+    roleSwitchLink: {
+      alignItems: 'center',
+      paddingTop: 2,
+    },
+    roleSwitchText: {
+      color: '#A1A1AA',
+      fontSize: 12,
+      fontWeight: '800',
     },
     forgotLink: {
       alignSelf: 'flex-end',

@@ -1,4 +1,4 @@
-﻿rules_version = '2';
+rules_version = '2';
 
 service firebase.storage {
   match /b/{bucket}/o {
@@ -10,21 +10,139 @@ service firebase.storage {
       return isSignedIn() && request.auth.token.admin == true;
     }
 
-    // Verification docs are private vault files.
-    match /verifications/{uid}/{allPaths=**} {
-      allow read, write: if isSignedIn() && (request.auth.uid == uid || isAdmin());
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
     }
 
-    // Posts media (future)
-    match /posts/{uid}/{allPaths=**} {
-      allow read: if true;
-      allow write: if isSignedIn() && request.auth.uid == uid;
+    function isImage() {
+      return request.resource.size <= 5 * 1024 * 1024
+        && request.resource.contentType in ['image/jpeg', 'image/png', 'image/webp'];
     }
 
-    // Artist profile + post uploads used by mobile app.
-    match /artists/{uid}/{allPaths=**} {
-      allow read: if true;
-      allow write: if isSignedIn() && (request.auth.uid == uid || isAdmin());
+    function isCertificateFile() {
+      return (
+        request.resource.contentType in ['image/jpeg', 'image/png', 'image/webp']
+        && request.resource.size <= 5 * 1024 * 1024
+      ) || (
+        request.resource.contentType == 'application/pdf'
+        && request.resource.size <= 10 * 1024 * 1024
+      );
+    }
+
+    function isMp4Video() {
+      return request.resource.size <= 30 * 1024 * 1024
+        && request.resource.contentType == 'video/mp4';
+    }
+
+    function userExists(uid) {
+      return firestore.exists(/databases/(default)/documents/users/$(uid));
+    }
+
+    function artistExists(uid) {
+      return firestore.exists(/databases/(default)/documents/artists/$(uid));
+    }
+
+    function isApprovedArtist(uid) {
+      return (
+        userExists(uid)
+        && firestore.get(/databases/(default)/documents/users/$(uid)).data.role == 'artist'
+        && firestore.get(/databases/(default)/documents/users/$(uid)).data.verificationStatus == 'approved'
+        && firestore.get(/databases/(default)/documents/users/$(uid)).data.postingEnabled == true
+      ) || (
+        artistExists(uid)
+        && firestore.get(/databases/(default)/documents/artists/$(uid)).data.verificationStatus == 'approved'
+        && firestore.get(/databases/(default)/documents/artists/$(uid)).data.postingEnabled == true
+        && firestore.get(/databases/(default)/documents/artists/$(uid)).data.artistVisible != false
+        && firestore.get(/databases/(default)/documents/artists/$(uid)).data.bookingVisible != false
+      );
+    }
+
+    function canUploadArtistMedia(uid) {
+      return isAdmin() || (isOwner(uid) && isApprovedArtist(uid));
+    }
+
+
+    function isAssignedBookingArtist(bookingId) {
+      return isSignedIn()
+        && firestore.exists(/databases/(default)/documents/bookings/$(bookingId))
+        && firestore.get(/databases/(default)/documents/bookings/$(bookingId)).data.artistUid == request.auth.uid;
+    }
+    match /verifications/{uid}/certificates/{fileName} {
+      allow read: if isOwner(uid) || isAdmin();
+      allow create, update: if (isOwner(uid) || isAdmin()) && isCertificateFile();
+      allow delete: if false;
+    }
+
+    match /verifications/{uid}/portfolio-images/{fileName} {
+      allow read: if isOwner(uid) || isAdmin();
+      allow create, update: if (isOwner(uid) || isAdmin()) && isImage();
+      allow delete: if isOwner(uid) || isAdmin();
+    }
+
+    match /verifications/{uid}/portfolio-videos/{fileName} {
+      allow read: if isOwner(uid) || isAdmin();
+      allow create, update: if (isOwner(uid) || isAdmin()) && isMp4Video();
+      allow delete: if isOwner(uid) || isAdmin();
+    }
+
+    match /verification/{uid}/portfolioImages/{fileName} {
+      allow read: if isOwner(uid) || isAdmin();
+      allow create, update, delete: if false;
+    }
+
+    match /verification/{uid}/portfolioVideos/{fileName} {
+      allow read: if isOwner(uid) || isAdmin();
+      allow create, update, delete: if false;
+    }
+
+    match /verification/{uid}/certificates/{fileName} {
+      allow read: if isOwner(uid) || isAdmin();
+      allow create, update, delete: if false;
+    }
+
+    match /bookingDesigns/{uid}/{bookingId}/{fileName} {
+      allow read: if isOwner(uid) || isAdmin() || isAssignedBookingArtist(bookingId);
+      allow create, update: if isOwner(uid) && isImage();
+      allow delete: if false;
+    }
+
+    match /booking-references/{uid}/{fileName} {
+      allow read: if isSignedIn();
+      allow create, update: if isOwner(uid) && (isImage() || isMp4Video());
+      allow delete: if isOwner(uid) || isAdmin();
+    }
+
+    match /paymentProofs/{uid}/{bookingId}/{fileName} {
+      allow read: if isOwner(uid) || isAdmin() || isAssignedBookingArtist(bookingId);
+      allow create, update: if isOwner(uid) && isImage();
+      allow delete: if false;
+    }
+    match /posts/{uid}/images/{fileName} {
+      allow read: if isSignedIn();
+      allow create, update: if canUploadArtistMedia(uid) && isImage();
+      allow delete: if false;
+    }
+
+    match /posts/{uid}/videos/{fileName} {
+      allow read: if isSignedIn();
+      allow create, update: if canUploadArtistMedia(uid) && isMp4Video();
+      allow delete: if false;
+    }
+
+    match /users/{uid}/profile/{fileName} {
+      allow read: if isSignedIn();
+      allow create, update: if (isOwner(uid) || isAdmin()) && isImage();
+      allow delete: if false;
+    }
+
+    match /artists/{uid}/profile/{fileName} {
+      allow read: if isSignedIn();
+      allow create, update: if (isOwner(uid) || isAdmin()) && isImage();
+      allow delete: if false;
+    }
+
+    match /{allPaths=**} {
+      allow read, write: if false;
     }
   }
 }

@@ -9,6 +9,7 @@ lerna-debug.log*
 
 node_modules
 .expo/
+.firebase/
 android/.kotlin/
 dist
 admin-web/dist
@@ -34,3 +35,12 @@ server/.env
 
 expo-env.d.ts
 # @end expo-cli
+# Android upload signing keys (local only - do not commit)
+android/keystore.properties
+android/keystores/
+*.jks
+*.keystore
+functions/.env
+functions/.env.*
+*firebase-adminsdk*.json
+*service-account*.json

@@ -1,4 +1,4 @@
-﻿import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { doc, onSnapshot, serverTimestamp, setDoc } from 'firebase/firestore';
 import { auth, db } from '../config/firebaseConfig';
@@ -94,8 +94,27 @@ export const useSessionRouting = (): AppSessionState => {
           }
 
           if (!isProfileComplete(profile)) {
-            // Transitional state; AppNavigator shows splash until provisioning completes.
-            setSession({ status: 'needsProfile', user, profile });
+            // Never hold the app on splash forever. Older/incomplete docs can still use
+            // the user dashboard while the background provision write catches up.
+            const fallbackProfile = {
+              ...profile,
+              uid: user.uid,
+              email: profile.email ?? user.email ?? null,
+              displayName: profile.displayName ?? user.displayName ?? null,
+              role: isUserRole(profile.role) ? profile.role : 'user',
+              setupComplete: true,
+              verificationStatus: isVerificationStatus(profile.verificationStatus) ? profile.verificationStatus : 'unsubmitted',
+              subscriptionStatus: profile.subscriptionStatus ?? 'inactive',
+              subscriptionPaymentStatus: profile.subscriptionPaymentStatus ?? 'idle',
+              subscriptionVerificationStatus: profile.subscriptionVerificationStatus ?? 'failed',
+            } as UserProfile & { role: any; setupComplete: true };
+
+            setSession({
+              status: 'ready',
+              user,
+              profile: fallbackProfile,
+              route: resolveDashboardRoute(resolveEffectiveRole(fallbackProfile)),
+            });
             return;
           }
 
@@ -113,12 +132,12 @@ export const useSessionRouting = (): AppSessionState => {
             status: 'ready',
             user,
             profile: profile as UserProfile & { role: any; setupComplete: true },
-            route: resolveDashboardRoute(resolveEffectiveRole(profile)),
+            route: resolveDashboardRoute(isUserRole(profile.role) ? profile.role : 'user'),
           });
         },
         (error) => {
           console.error('TATZO: profile subscription failed', error);
-          setSession({ status: 'needsProfile', user, profile: null });
+          setSession({ status: 'signedOut' });
         },
       );
     });
@@ -131,6 +150,8 @@ export const useSessionRouting = (): AppSessionState => {
 
   return session;
 };
+
+
 
 
 

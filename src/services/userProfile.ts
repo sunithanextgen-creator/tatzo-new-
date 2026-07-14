@@ -19,10 +19,22 @@ export const syncUserProfile = async (user: User, extra: Partial<UserProfile> = 
     ...extra,
     updatedAt: serverTimestamp(),
   };
+  const email = String(extra.email ?? profile.email ?? '').trim().toLowerCase();
+  const artistName = String(extra.artistName ?? extra.displayName ?? '').trim().toLowerCase();
+  const studioName = String(extra.studioName ?? '').trim().toLowerCase();
+  if (email) profilePayload.emailLower = email;
+  if (artistName) profilePayload.artistNameLower = artistName;
+  if (studioName) profilePayload.studioNameLower = studioName;
 
   if (extra.createdAt) {
     profilePayload.createdAt = extra.createdAt;
   }
+
+  Object.keys(profilePayload).forEach((key) => {
+    if (profilePayload[key] === undefined) {
+      delete profilePayload[key];
+    }
+  });
 
   await setDoc(
     userRef,

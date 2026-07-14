@@ -1,490 +1,567 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Alert, FlatList, StyleSheet, Text, TextInput, TouchableOpacity, useWindowDimensions, View } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
+import { FlatList, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useAppTheme } from '../../../theme/useAppTheme';
-import type { AppTheme } from '../../../theme/theme';
-import type { DummyArtist } from '../../../data/dummyArtists';
-import { brand } from '../../../theme/brand';
-import GradientButton from '../../../components/ui/GradientButton';
-import { collection, limit, onSnapshot, query } from 'firebase/firestore';
+import * as Location from 'expo-location';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { collection, getDocs, limit, query, startAfter, where, type DocumentData, type QueryDocumentSnapshot } from 'firebase/firestore';
 import { db } from '../../../config/firebaseConfig';
+import ProfileAvatar from '../../../components/ui/ProfileAvatar';
+import { getArtistAvailabilityLabel, getArtistBookingMessage, getArtistLocationLabel, getArtistSettingsFromProfile, isArtistDiscoverableForPublic } from '../../../services/artistSettings';
+import type { AppTheme } from '../../../theme/theme';
+import { useAppTheme } from '../../../theme/useAppTheme';
+import type { UserProfile } from '../../../types/app';
+import { ANALYTICS_EVENTS, trackAnalyticsEvent } from '../../../services/analytics/analytics';
 
 type FindArtistPanelProps = {
   header?: React.ReactNode;
-  onBook: (artist: DummyArtist) => void;
+  onViewArtist?: (artistUid: string) => void;
+  viewerProfile?: UserProfile | null;
 };
 
-type PublicArtistProfile = {
-  uid: string;
-  displayName?: string;
-  artistName?: string;
-  studioName?: string;
-  locationCity?: string;
-  locationArea?: string;
-  location?: string;
-  startingPrice?: number;
-  startingFrom?: number;
-  experience?: string;
-  styles?: string[];
-  tags?: string[];
-  verificationStatus?: string;
-  isVisible?: boolean;
-  verifiedPro?: boolean;
+type ArtistRow = UserProfile & { uid: string; artistUid?: string };
+type NearbyLocation = { area: string; city: string };
+
+const PAGE_SIZE = 40;
+const STYLE_FILTERS = ['All', 'Black & Grey', 'Minimal', 'Realism', 'Portrait', 'Traditional', 'Color', 'Mandala'];
+const LOCATION_FILTERS = ['Nearby', 'Chennai', 'Guindy', 'Tambaram', 'T Nagar', 'Anna Nagar', 'Velachery', 'Adyar', 'OMR'];
+const CHENNAI_AREA_TOKENS = [
+  'chennai', 'guindy', 'tambaram', 't nagar', 'anna nagar', 'velachery', 'adyar', 'omr',
+  'porur', 'chromepet', 'pallavaram', 'ambattur', 'avadi', 'sholinganallur', 'medavakkam',
+  'perungalathur', 'nungambakkam', 'mylapore', 'kodambakkam', 'egmore', 'besant nagar',
+];
+
+const safeTrim = (value: unknown) => String(value ?? '').trim();
+const normalizeToken = (value: unknown) => safeTrim(value).toLowerCase();
+
+const getArtistSearchText = (row: ArtistRow) => {
+  const settings = getArtistSettingsFromProfile(row);
+  return [
+    row.artistName,
+    row.displayName,
+    row.studioName,
+    (row as any).shopName,
+    (row as any).businessName,
+    row.bio,
+    row.locationCity,
+    row.locationArea,
+    row.location,
+    (row as any).shopAddressLine,
+    (row as any).address,
+    (row.styles ?? []).join(' '),
+    getArtistLocationLabel(row, settings),
+    getArtistBookingMessage(settings),
+  ].filter(Boolean).join(' ').toLowerCase();
 };
 
-const formatMoney = (value?: number) => {
-  if (!value) return '0';
-  return new Intl.NumberFormat('en-IN').format(value);
+const getLocationTokens = (row: ArtistRow) => [
+  row.locationArea,
+  row.locationCity,
+  row.location,
+  row.studioName,
+  (row as any).shopName,
+  (row as any).businessName,
+  (row as any).shopAddressLine,
+  (row as any).address,
+].map(normalizeToken).filter(Boolean);
+
+const hasLocationMatch = (row: ArtistRow, locationNeedle: string) => {
+  if (!locationNeedle) return true;
+  return getLocationTokens(row).some((token) => token.includes(locationNeedle) || locationNeedle.includes(token));
 };
 
-const REGION_FILTERS = [
-  'All',
-  'Chennai',
-  'Around Chennai',
-  'Anna Nagar',
-  'T Nagar',
-  'Velachery',
-  'Tambaram',
-  'Porur',
-  'Avadi',
-  'Ambattur',
-  'Adyar',
-  'OMR',
-  'ECR',
-] as const;
+const isChennaiArtist = (row: ArtistRow) => {
+  const locationText = getLocationTokens(row).join(' ');
+  return CHENNAI_AREA_TOKENS.some((token) => locationText.includes(token));
+};
 
-type RegionFilter = (typeof REGION_FILTERS)[number];
+const matchesSearch = (row: ArtistRow, needle: string) => !needle || getArtistSearchText(row).includes(needle);
 
-const FindArtistPanel = ({ header, onBook }: FindArtistPanelProps) => {
+const isFindArtistVisible = (row: ArtistRow) =>
+  row.verificationStatus === 'approved' &&
+  row.artistVisible !== false &&
+  row.bookingVisible !== false &&
+  isArtistDiscoverableForPublic(row);
+
+const FindArtistPanel = ({ header, onViewArtist, viewerProfile }: FindArtistPanelProps) => {
   const { theme } = useAppTheme();
+  const insets = useSafeAreaInsets();
   const styles = useMemo(() => createStyles(theme), [theme]);
-  const { width } = useWindowDimensions();
-
-  const [searchText, setSearchText] = useState('');
-  const [liveArtists, setLiveArtists] = useState<DummyArtist[]>([]);
+  const [search, setSearch] = useState('');
+  const [styleFilter, setStyleFilter] = useState('All');
+  const [locationFilter, setLocationFilter] = useState('Nearby');
+  const [artists, setArtists] = useState<ArtistRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [region, setRegion] = useState<RegionFilter>('Chennai');
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [cursor, setCursor] = useState<QueryDocumentSnapshot<DocumentData> | null>(null);
+  const [hasMore, setHasMore] = useState(true);
+  const [deviceLocation, setDeviceLocation] = useState<NearbyLocation | null>(null);
+  const [locationStatus, setLocationStatus] = useState<'loading' | 'gps' | 'fallback'>('loading');
+  const deviceLocationIsChennai = useMemo(() => {
+    const area = normalizeToken(deviceLocation?.area);
+    const city = normalizeToken(deviceLocation?.city);
+    return CHENNAI_AREA_TOKENS.some((token) => area.includes(token) || city.includes(token));
+  }, [deviceLocation]);
 
   useEffect(() => {
-    const q = query(collection(db, 'artists'), limit(120));
-    const unsub = onSnapshot(
-      q,
-      (snap) => {
-        const rows = snap.docs
-          .map((row) => {
-            const data = row.data() as PublicArtistProfile;
-            if (data.isVisible === false) return null;
-            const approved = data.verificationStatus === 'approved' || data.verifiedPro === true;
-            if (!approved) return null;
+    let active = true;
+    (async () => {
+      try {
+        const permission = await Location.requestForegroundPermissionsAsync();
+        if (permission.status !== Location.PermissionStatus.GRANTED) {
+          if (active) setLocationStatus('fallback');
+          return;
+        }
 
-            const name = String(data.artistName ?? data.displayName ?? data.studioName ?? '').trim();
-            if (!name) return null;
-
-            const city = String(data.locationCity ?? '').trim() || 'Chennai';
-            const area = String(data.locationArea ?? '').trim() || 'Around Chennai';
-            const locationText = `${area}, ${city}, Tamil Nadu`;
-            const startingFrom = Number(data.startingPrice ?? data.startingFrom ?? 0);
-            const tags = Array.isArray(data.styles)
-              ? data.styles.map((tag) => String(tag))
-              : Array.isArray(data.tags)
-                ? data.tags.map((tag) => String(tag))
-                : [];
-
-            const handleBase = name
-              .toLowerCase()
-              .replace(/[^a-z0-9]+/g, '_')
-              .replace(/^_+|_+$/g, '');
-
-            return {
-              id: row.id,
-              name,
-              handle: `@${handleBase || 'tatzo_artist'}`,
-              specialty: tags.length ? tags.slice(0, 2).join(' | ') : 'Tattoo Artist',
-              location: locationText || city || area || 'Chennai',
-              status: data.experience ? `${data.experience} experience` : 'Open for consultation',
-              category: tags[0] || 'Artist',
-              rating: 4.8,
-              startingFrom: Number.isFinite(startingFrom) ? startingFrom : 0,
-              verified: true,
-              tags: tags.length ? tags : ['tattoo'],
-            } as DummyArtist;
-          })
-          .filter(Boolean) as DummyArtist[];
-
-        setLiveArtists(rows);
-        setLoading(false);
-      },
-      () => {
-        setLiveArtists([]);
-        setLoading(false);
-      },
-    );
-
-    return () => unsub();
+        const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+        const addresses = await Location.reverseGeocodeAsync(position.coords);
+        const address = addresses[0] as (Location.LocationGeocodedAddress & { subregion?: string | null }) | undefined;
+        const area = safeTrim(address?.district || address?.subregion || address?.name);
+        const city = safeTrim(address?.city || address?.subregion || address?.region);
+        if (!active) return;
+        setDeviceLocation({ area, city });
+        setLocationStatus(area || city ? 'gps' : 'fallback');
+      } catch {
+        if (active) setLocationStatus('fallback');
+      }
+    })();
+    return () => {
+      active = false;
+    };
   }, []);
 
-  const data = useMemo(() => {
-    const q = searchText.trim().toLowerCase();
-    const exactAreas = new Set(
-      REGION_FILTERS.filter((value) => !['All', 'Chennai', 'Around Chennai'].includes(value)).map((value) => value.toLowerCase()),
-    );
-    const base = liveArtists.filter((a) => {
-      const locationText = String(a.location ?? '').toLowerCase();
-      const pieces = String(a.location ?? '')
-        .split(',')
-        .map((part) => part.trim().toLowerCase())
-        .filter(Boolean);
-      const area = pieces[0] ?? '';
-      const city = pieces[1] ?? 'chennai';
+  const loadArtistPage = async (mode: 'replace' | 'append', pageCursor: QueryDocumentSnapshot<DocumentData> | null = null) => {
+    const baseConstraints = [
+      where('verificationStatus', '==', 'approved'),
+      where('isVisible', '==', true),
+    ] as const;
+    const q = pageCursor
+      ? query(collection(db, 'artists'), ...baseConstraints, startAfter(pageCursor), limit(PAGE_SIZE))
+      : query(collection(db, 'artists'), ...baseConstraints, limit(PAGE_SIZE));
+    const snap = await getDocs(q);
+    const rows = snap.docs.map((row) => ({
+      uid: row.id,
+      artistUid: row.id,
+      ...(row.data() as any),
+    }));
+    setArtists((prev) => (mode === 'append' ? [...prev, ...rows] : rows));
+    setCursor(snap.docs.length > 0 ? snap.docs[snap.docs.length - 1] : pageCursor);
+    setHasMore(snap.docs.length === PAGE_SIZE);
+  };
 
-      if (region === 'All') return true;
-      if (region === 'Chennai') return city.includes('chennai');
-      if (region === 'Around Chennai') {
-        if (!city.includes('chennai')) return false;
-        if (!area) return true;
-        return !exactAreas.has(area);
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        if (active) {
+          setLoading(true);
+          await loadArtistPage('replace', null);
+        }
+      } catch {
+        if (active) setArtists([]);
+      } finally {
+        if (active) setLoading(false);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const loadMoreArtists = async () => {
+    if (loading || loadingMore || !hasMore) return;
+    setLoadingMore(true);
+    try {
+      await loadArtistPage('append', cursor);
+    } catch {
+      setHasMore(false);
+    } finally {
+      setLoadingMore(false);
+    }
+  };
+
+  const visibleArtists = useMemo(() => {
+    const needle = search.trim().toLowerCase();
+    const gpsArea = normalizeToken(deviceLocation?.area);
+    const gpsCity = normalizeToken(deviceLocation?.city);
+    const profileArea = normalizeToken(viewerProfile?.locationArea);
+    const profileCity = normalizeToken(viewerProfile?.locationCity || viewerProfile?.location);
+    const profileIsChennai = CHENNAI_AREA_TOKENS.some((token) => profileArea.includes(token) || profileCity.includes(token));
+    const viewerArea = deviceLocationIsChennai ? gpsArea : profileIsChennai ? profileArea : '';
+    const viewerCity = deviceLocationIsChennai ? gpsCity : profileIsChennai ? profileCity : 'chennai';
+    const activeLocation = locationFilter === 'Nearby' ? viewerArea || viewerCity || 'chennai' : normalizeToken(locationFilter);
+
+    const getSearchRank = (row: ArtistRow) => {
+      if (!needle) return 0;
+      const area = normalizeToken(row.locationArea);
+      const city = normalizeToken(row.locationCity || row.location);
+      if (area && (area.includes(needle) || needle.includes(area))) return 0;
+      if (city && (city.includes(needle) || needle.includes(city))) return 1;
+      return 2;
+    };
+
+    const getLocationRank = (row: ArtistRow) => {
+      const area = normalizeToken(row.locationArea);
+      const city = normalizeToken(row.locationCity || row.location);
+      const text = getArtistSearchText(row);
+
+      if (locationFilter === 'Nearby') {
+        if (viewerArea && area && (area.includes(viewerArea) || viewerArea.includes(area))) return 0;
+        if (viewerCity && city && (city.includes(viewerCity) || viewerCity.includes(city))) return 1;
+        if (city === 'chennai' || text.includes('chennai')) return 2;
+        return 20;
       }
 
-      return area.includes(region.toLowerCase()) || locationText.includes(region.toLowerCase());
+      if (area && (area.includes(activeLocation) || activeLocation.includes(area))) return 0;
+      if (city && (city.includes(activeLocation) || activeLocation.includes(city))) return 1;
+      if (text.includes(activeLocation)) return 2;
+      return 20;
+    };
+
+    return artists.filter((row) => {
+      if (!isChennaiArtist(row)) return false;
+      if (!isFindArtistVisible(row)) return false;
+      const rowStyles = (row.styles ?? []).map((item) => safeTrim(item).toLowerCase());
+      if (styleFilter !== 'All' && !rowStyles.some((style) => style.includes(styleFilter.toLowerCase()))) return false;
+      if (locationFilter !== 'Nearby' && !hasLocationMatch(row, activeLocation)) return false;
+      return matchesSearch(row, needle);
+    }).sort((left, right) => {
+      const searchRank = getSearchRank(left) - getSearchRank(right);
+      if (searchRank !== 0) return searchRank;
+      const locationRank = getLocationRank(left) - getLocationRank(right);
+      if (locationRank !== 0) return locationRank;
+      const leftPrice = Number(left.startingPrice ?? Number.MAX_SAFE_INTEGER);
+      const rightPrice = Number(right.startingPrice ?? Number.MAX_SAFE_INTEGER);
+      return leftPrice - rightPrice;
     });
+  }, [artists, search, styleFilter, locationFilter, viewerProfile, deviceLocation, deviceLocationIsChennai]);
 
-    if (!q) return base;
-    return base.filter((artist) => {
-      const haystack = `${artist.name} ${artist.handle} ${artist.specialty} ${artist.tags.join(' ')}`.toLowerCase();
-      return haystack.includes(q);
-    });
-  }, [liveArtists, searchText, region]);
+  useEffect(() => {
+    const searchTerm = search.trim();
+    if (searchTerm.length < 2) return;
+    const timer = setTimeout(() => {
+      void trackAnalyticsEvent(ANALYTICS_EVENTS.SEARCH_ARTIST, {
+        search_length: searchTerm.length,
+        result_count: visibleArtists.length,
+        style_filter: styleFilter,
+        location_filter: locationFilter,
+      });
+    }, 650);
+    return () => clearTimeout(timer);
+  }, [locationFilter, search, styleFilter, visibleArtists.length]);
 
-  const cardWidth = useMemo(() => {
-    const padding = 18;
-    const gap = 12;
-    const usable = Math.max(320, width) - padding * 2;
-    return Math.floor((usable - gap) / 2);
-  }, [width]);
-
-  const renderCard = ({ item }: { item: DummyArtist }) => {
-    const verified = Boolean(item.verified);
-    const rating = item.rating ?? 0;
-    const starting = item.startingFrom ?? 0;
-    const category = (item.category ?? 'TATZO').toUpperCase();
+  const renderItem = ({ item }: { item: ArtistRow }) => {
+    const settings = getArtistSettingsFromProfile(item);
+    const location = getArtistLocationLabel(item, settings);
+    const availability = getArtistAvailabilityLabel(settings);
+    const startingPrice = Number(item.startingPrice ?? 0);
+    const experience = safeTrim((item as any).experienceYears ?? item.experience ?? (item as any).artistSinceYear);
+    const stylesToShow = (item.styles ?? []).slice(0, 3);
 
     return (
-      <TouchableOpacity style={[styles.artistCard, { width: cardWidth }]} activeOpacity={0.9} onPress={() => onBook(item)}>
-        <LinearGradient
-          colors={[theme.colors.backgroundAlt, 'rgba(0, 229, 255, 0.16)', 'rgba(122, 92, 255, 0.22)']}
-          style={styles.media}
-        >
-          {verified ? (
-            <View style={styles.verifiedPill}>
-              <Ionicons name="checkmark-circle" size={14} color={brand.electricNeonBlue} />
-              <Text style={styles.verifiedText}>VERIFIED</Text>
+      <View style={styles.card}>
+        <TouchableOpacity activeOpacity={0.9} style={styles.cardTop} onPress={() => onViewArtist?.(item.uid)}>
+          <ProfileAvatar uri={item.profileImageUrl} name={item.artistName || item.displayName || 'Artist'} size={66} />
+          <View style={styles.cardCopy}>
+            <View style={styles.nameRow}>
+              <Text style={styles.name} numberOfLines={1}>{item.artistName || item.displayName || 'Artist'}</Text>
+              <Ionicons name="checkmark-circle" size={15} color={theme.colors.accentStrong} />
             </View>
-          ) : null}
-          <Text style={styles.category}>{category}</Text>
-        </LinearGradient>
-
-        <View style={styles.cardBody}>
-          <View style={styles.nameRow}>
-            <Text numberOfLines={1} style={styles.name}>
-              {item.name}
-            </Text>
-            <View style={styles.ratingRow}>
-              <Ionicons name="star" size={12} color={brand.electricNeonBlue} />
-              <Text style={styles.ratingText}>{rating.toFixed(1)}</Text>
-            </View>
+            <Text style={styles.subText} numberOfLines={1}>{item.studioName || 'Tatzo Studio'}</Text>
+            <Text style={styles.subText} numberOfLines={1}>{location}</Text>
+            <Text style={styles.subText} numberOfLines={1}>{experience ? `${experience} Years Experience` : 'Experience not added'}</Text>
           </View>
+        </TouchableOpacity>
 
-          <Text style={styles.priceText}>Starting from Rs. {formatMoney(starting)}+</Text>
-          <Text style={styles.locationText} numberOfLines={1}>
-            {item.location}
-          </Text>
-
-          <GradientButton title="Book Now" onPress={() => onBook(item)} size="md" />
+        <View style={styles.tagRow}>
+          {stylesToShow.map((tag) => (
+            <View key={tag} style={styles.styleTag}>
+              <Text style={styles.styleTagText}>{tag}</Text>
+            </View>
+          ))}
+          <View style={styles.availabilityTag}>
+            <Ionicons name={availability === 'Available' ? 'checkmark-circle' : 'time-outline'} size={12} color={theme.colors.accent} />
+            <Text style={styles.metaText}>{availability}</Text>
+          </View>
+          <View style={styles.priceTag}>
+            <Text style={styles.metaText}>Starting Rs. {startingPrice > 0 ? startingPrice : '—'}</Text>
+          </View>
         </View>
-      </TouchableOpacity>
+
+        <View style={styles.actionRow}>
+          <TouchableOpacity activeOpacity={0.9} style={styles.viewBtn} onPress={() => onViewArtist?.(item.uid)}>
+            <Text style={styles.viewBtnText}>View Artist</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
     );
   };
 
-  return (
-    <FlatList
-      data={data}
-      keyExtractor={(item) => item.id}
-      numColumns={2}
-      columnWrapperStyle={{ gap: 12 }}
-      contentContainerStyle={{ paddingHorizontal: 18, paddingTop: 16, paddingBottom: 110, gap: 12 }}
-      showsVerticalScrollIndicator={false}
-      ListEmptyComponent={
-        !loading ? <Text style={styles.emptyText}>No approved artists found for this location.</Text> : null
-      }
-      ListHeaderComponent={
-        <View style={styles.headerWrap}>
-          {header ? <View style={styles.externalHeader}>{header}</View> : null}
+  const listHeader = (
+    <View>
+      {header ? <View style={styles.headerWrap}>{header}</View> : null}
 
-          <View style={styles.searchShell}>
-            <Ionicons name="search-outline" size={16} color={theme.colors.textMuted} />
-            <TextInput
-              value={searchText}
-              onChangeText={setSearchText}
-              placeholder="Search artists or styles..."
-              placeholderTextColor={theme.colors.textMuted}
-              autoCorrect={false}
-              autoCapitalize="none"
-              nativeID="findArtistSearch"
-              style={styles.searchInput}
-            />
-            {searchText.length ? (
-              <TouchableOpacity activeOpacity={0.85} onPress={() => setSearchText('')} style={styles.clearBtn}>
-                <Text style={styles.clearText}>X</Text>
-              </TouchableOpacity>
-            ) : null}
-          </View>
-
-          <View style={styles.regionRow}>
-            <View style={styles.regionLeft}>
-              <Ionicons name="location-outline" size={16} color={brand.electricNeonBlue} />
-              <Text style={styles.regionTitle}>SELECT REGION</Text>
-            </View>
-            <Text style={styles.regionValue}>{region}</Text>
-          </View>
-
-          <FlatList
-            horizontal
-            data={REGION_FILTERS}
-            keyExtractor={(item) => item}
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.regionChips}
-            renderItem={({ item }) => {
-              const active = region === item;
-              return (
-                <TouchableOpacity
-                  activeOpacity={0.9}
-                  style={[styles.regionPill, active && styles.regionPillActive]}
-                  onPress={() => setRegion(item)}
-                >
-                  <Text style={[styles.regionPillText, active && styles.regionPillTextActive]}>{item}</Text>
-                </TouchableOpacity>
-              );
-            }}
+      <View style={styles.searchCard}>
+        <View style={styles.searchRow}>
+          <Ionicons name="search-outline" size={18} color={theme.colors.textMuted} />
+          <TextInput
+            value={search}
+            onChangeText={setSearch}
+            placeholder="Search artist, studio, style, city, area"
+            placeholderTextColor={theme.colors.textMuted}
+            style={styles.searchInput}
           />
-
-          <View style={styles.topRow}>
-            <Text style={styles.topTitle}>Top Artists</Text>
-            <Text style={styles.countPill}>{data.length} Found</Text>
-          </View>
-          {loading ? <Text style={styles.loadingText}>Loading approved artists...</Text> : null}
         </View>
-      }
-      renderItem={renderCard}
-    />
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRow}>
+          {STYLE_FILTERS.map((item) => (
+            <TouchableOpacity key={item} activeOpacity={0.9} onPress={() => setStyleFilter(item)} style={[styles.filterChip, styleFilter === item && styles.filterChipActive]}>
+              <Text style={[styles.filterText, styleFilter === item && styles.filterTextActive]}>{item}</Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRow}>
+          {LOCATION_FILTERS.map((item) => (
+            <TouchableOpacity key={item} activeOpacity={0.9} onPress={() => setLocationFilter(item)} style={[styles.locationChip, locationFilter === item && styles.locationChipActive]}>
+              <Ionicons name={item === 'Nearby' ? 'navigate-outline' : 'location-outline'} size={12} color={locationFilter === item ? theme.colors.accent : theme.colors.textMuted} />
+              <Text style={[styles.filterText, locationFilter === item && styles.filterTextActive]}>{item}</Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+        <Text style={styles.locationHint}>
+          {locationStatus === 'loading'
+            ? 'Finding your location...'
+            : locationStatus === 'gps' && deviceLocationIsChennai
+              ? `Nearby uses ${[deviceLocation?.area, deviceLocation?.city].filter(Boolean).join(', ')}`
+              : 'Tatzo currently shows artists in Chennai and nearby areas.'}
+        </Text>
+      </View>
+    </View>
+  );
+
+  return (
+    <View style={styles.container}>
+      <FlatList
+        data={loading ? [] : visibleArtists}
+        keyExtractor={(item) => item.uid}
+        renderItem={renderItem}
+        contentContainerStyle={[styles.listContent, { paddingBottom: 120 + insets.bottom }]}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+        ListHeaderComponent={listHeader}
+        onEndReachedThreshold={0.4}
+        onEndReached={loadMoreArtists}
+        ListEmptyComponent={
+          loading ? (
+            <Text style={styles.loading}>Loading artists...</Text>
+          ) : (
+            <View style={styles.emptyState}>
+              <Ionicons name="search-outline" size={24} color={theme.colors.textMuted} />
+              <Text style={styles.emptyTitle}>No artists found near this location yet</Text>
+              <Text style={styles.emptyBody}>Try searching another area or style.</Text>
+            </View>
+          )
+        }
+        ListFooterComponent={loadingMore ? <Text style={styles.loading}>Loading more artists...</Text> : null}
+      />
+    </View>
   );
 };
 
 const createStyles = (theme: AppTheme) =>
   StyleSheet.create({
-    headerWrap: {
-      gap: 14,
-      paddingBottom: 4,
+    container: { flex: 1 },
+    headerWrap: { marginBottom: 8 },
+    searchCard: {
+      marginHorizontal: 16,
+      marginBottom: 12,
+      borderRadius: 22,
+      backgroundColor: theme.mode === 'light' ? '#ffffff' : 'rgba(255,255,255,0.03)',
+      padding: 12,
+      gap: 10,
     },
-    externalHeader: {
-      gap: 18,
-    },
-    searchShell: {
+    searchRow: {
       flexDirection: 'row',
       alignItems: 'center',
       gap: 10,
-      borderRadius: 14,
-      backgroundColor: theme.mode === 'light' ? 'rgba(11, 11, 15, 0.06)' : 'rgba(255, 255, 255, 0.06)',
+      borderRadius: 15,
       borderWidth: 1,
-      borderColor: theme.colors.border,
-      paddingHorizontal: 14,
-      paddingVertical: 12,
+      borderColor: theme.mode === 'light' ? 'rgba(168,85,247,0.22)' : 'rgba(0,212,255,0.18)',
+      backgroundColor: theme.mode === 'light' ? '#ffffff' : 'rgba(0,0,0,0.22)',
+      paddingHorizontal: 12,
+      paddingVertical: 10,
     },
     searchInput: {
       flex: 1,
       color: theme.mode === 'light' ? theme.colors.text : theme.colors.textInverse,
-      fontSize: 14,
-      fontWeight: '600',
-      paddingVertical: 0,
-    },
-    clearBtn: {
-      width: 26,
-      height: 26,
-      borderRadius: 13,
-      alignItems: 'center',
-      justifyContent: 'center',
-      backgroundColor: theme.colors.accentSoft,
-      borderWidth: 1,
-      borderColor: theme.mode === 'light' ? 'rgba(122, 92, 255, 0.22)' : 'rgba(122, 92, 255, 0.3)',
-    },
-    clearText: {
-      color: theme.mode === 'light' ? theme.colors.text : theme.colors.textInverse,
-      fontSize: 12,
+      fontSize: 13,
       fontWeight: '800',
     },
-    regionRow: {
-      flexDirection: 'row',
-      justifyContent: 'space-between',
-      alignItems: 'center',
+    locationHint: {
+      color: theme.colors.textMuted,
+      fontSize: Math.max(10, theme.typography.caption - 1),
       paddingHorizontal: 2,
     },
-    regionLeft: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 8,
+    filterRow: {
+      gap: 9,
+      paddingRight: 4,
     },
-    regionTitle: {
-      color: theme.colors.textMuted,
-      fontSize: 12,
-      fontWeight: '800',
-      letterSpacing: 1.6,
-    },
-    regionValue: {
-      color: brand.electricNeonBlue,
-      fontSize: 12,
-      fontWeight: '800',
-      letterSpacing: 1,
-    },
-    regionChips: {
-      gap: 8,
-      paddingTop: 2,
-      paddingBottom: 4,
-    },
-    regionPill: {
+    filterChip: {
+      paddingHorizontal: 13,
+      paddingVertical: 8,
       borderRadius: 999,
       borderWidth: 1,
       borderColor: theme.colors.border,
-      backgroundColor: theme.colors.surface,
-      paddingHorizontal: 10,
-      paddingVertical: 7,
-      minHeight: 34,
-      justifyContent: 'center',
+      backgroundColor: theme.mode === 'light' ? '#ffffff' : 'rgba(255,255,255,0.03)',
     },
-    regionPillActive: {
-      borderColor: theme.mode === 'light' ? 'rgba(122, 92, 255, 0.35)' : 'rgba(122, 92, 255, 0.4)',
+    filterChipActive: {
+      backgroundColor: theme.colors.accentSoft,
+      borderColor: theme.colors.accent,
+    },
+    locationChip: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 5,
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: theme.mode === 'light' ? 'rgba(168,85,247,0.18)' : 'rgba(0,212,255,0.15)',
+      backgroundColor: theme.mode === 'light' ? '#ffffff' : 'rgba(255,255,255,0.025)',
+    },
+    locationChipActive: {
+      borderColor: theme.colors.accent,
       backgroundColor: theme.colors.accentSoft,
     },
-    regionPillText: {
+    filterText: {
       color: theme.colors.textMuted,
-      fontSize: 11,
-      fontWeight: '800',
-      letterSpacing: 0.25,
-    },
-    regionPillTextActive: {
-      color: theme.mode === 'light' ? theme.colors.text : theme.colors.textInverse,
-    },
-    topRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      marginTop: 6,
-    },
-    topTitle: {
-      color: theme.mode === 'light' ? theme.colors.text : theme.colors.textInverse,
-      fontSize: 20,
-      fontFamily: theme.fonts.display,
-    },
-    countPill: {
-      color: theme.colors.accent,
-      backgroundColor: theme.colors.accentSoft,
-      borderRadius: 999,
-      paddingHorizontal: 10,
-      paddingVertical: 5,
-      fontSize: 11,
-      fontWeight: '700',
-      borderWidth: 1,
-      borderColor: theme.mode === 'light' ? 'rgba(122, 92, 255, 0.22)' : 'rgba(122, 92, 255, 0.3)',
-    },
-    artistCard: {
-      borderRadius: 22,
-      overflow: 'hidden',
-      borderWidth: 1,
-      borderColor: theme.colors.border,
-      backgroundColor: theme.colors.surface,
-    },
-    media: {
-      height: 170,
-      justifyContent: 'flex-end',
-      padding: 12,
-    },
-    verifiedPill: {
-      position: 'absolute',
-      top: 10,
-      right: 10,
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 6,
-      backgroundColor: 'rgba(11, 11, 15, 0.6)',
-      borderRadius: 999,
-      paddingHorizontal: 10,
-      paddingVertical: 6,
-      borderWidth: 1,
-      borderColor: 'rgba(0, 229, 255, 0.3)',
-    },
-    verifiedText: {
-      color: theme.colors.textInverse,
       fontSize: 10,
-      fontWeight: '800',
-      letterSpacing: 1,
+      fontWeight: '900',
     },
-    category: {
-      color: brand.electricNeonBlue,
-      fontSize: 11,
-      fontWeight: '800',
-      letterSpacing: 1.2,
+    filterTextActive: {
+      color: theme.mode === 'light' ? theme.colors.accent : theme.colors.textInverse,
     },
-    cardBody: {
-      padding: 12,
-      gap: 10,
+    loading: {
+      paddingHorizontal: 16,
+      color: theme.colors.textMuted,
+      fontSize: 13,
+      fontWeight: '700',
+    },
+    listContent: {
+      paddingHorizontal: 16,
+      gap: 12,
+    },
+    card: {
+      borderRadius: 22,
+      backgroundColor: theme.mode === 'light' ? '#ffffff' : 'rgba(255,255,255,0.035)',
+      padding: 13,
+      gap: 12,
+    },
+    cardTop: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 11,
+    },
+    cardCopy: {
+      flex: 1,
+      minWidth: 0,
+      gap: 3,
     },
     nameRow: {
       flexDirection: 'row',
-      justifyContent: 'space-between',
       alignItems: 'center',
-      gap: 10,
+      gap: 6,
     },
     name: {
-      flex: 1,
       color: theme.mode === 'light' ? theme.colors.text : theme.colors.textInverse,
       fontSize: 15,
+      fontWeight: '900',
+      flexShrink: 1,
+    },
+    subText: {
+      color: theme.colors.textMuted,
+      fontSize: 11,
       fontWeight: '800',
     },
-    ratingRow: {
+    tagRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8,
+    },
+    styleTag: {
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      backgroundColor: theme.mode === 'light' ? '#ffffff' : 'rgba(255,255,255,0.03)',
+    },
+    availabilityTag: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 4,
+      gap: 5,
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: theme.colors.accent,
+      backgroundColor: theme.colors.accentSoft,
     },
-    ratingText: {
-      color: theme.colors.textInverse,
-      fontSize: 12,
-      fontWeight: '800',
+    priceTag: {
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      backgroundColor: theme.mode === 'light' ? '#ffffff' : 'rgba(255,255,255,0.03)',
     },
-    priceText: {
-      color: theme.colors.textMuted,
-      fontSize: 12,
-      fontWeight: '700',
+    styleTagText: {
+      color: theme.mode === 'light' ? theme.colors.text : theme.colors.textInverse,
+      fontSize: 10,
+      fontWeight: '900',
     },
-    locationText: {
+    metaText: {
+      color: theme.mode === 'light' ? theme.colors.text : theme.colors.textInverse,
+      fontSize: 10,
+      fontWeight: '900',
+    },
+    actionRow: {
+      flexDirection: 'row',
+      gap: 9,
+    },
+    viewBtn: {
+      flex: 1,
+      paddingVertical: 12,
+      borderRadius: 15,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 1,
+      borderColor: theme.colors.accent,
+      backgroundColor: theme.mode === 'light' ? '#ffffff' : 'rgba(255,255,255,0.03)',
+    },
+    viewBtnText: {
       color: theme.mode === 'light' ? theme.colors.text : theme.colors.textInverse,
       fontSize: 12,
-      fontWeight: '700',
-      marginTop: -2,
+      fontWeight: '900',
     },
-    loadingText: {
+    emptyState: {
+      marginTop: 20,
+      borderRadius: 20,
+      backgroundColor: theme.mode === 'light' ? '#ffffff' : 'rgba(255,255,255,0.03)',
+      padding: 16,
+      alignItems: 'center',
+      gap: 8,
+    },
+    emptyTitle: {
+      color: theme.mode === 'light' ? theme.colors.text : theme.colors.textInverse,
+      fontSize: 14,
+      fontWeight: '900',
+    },
+    emptyBody: {
       color: theme.colors.textMuted,
       fontSize: 12,
       fontWeight: '700',
-      paddingHorizontal: 2,
-    },
-    emptyText: {
-      color: theme.colors.textMuted,
       textAlign: 'center',
-      fontSize: 12,
-      fontWeight: '700',
-      paddingTop: 10,
-      paddingHorizontal: 18,
+      lineHeight: 18,
     },
-    // Book button is now GradientButton for consistent neon+purple CTA.
   });
 
 export default FindArtistPanel;

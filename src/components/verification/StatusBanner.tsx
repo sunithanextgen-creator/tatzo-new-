@@ -22,7 +22,7 @@ const StatusBanner = ({ status, requestedRole, rejectReason, actionLabel, onPres
 
   const roleLabel = requestedRole ? requestedRole.toUpperCase() : 'ARTIST';
 
-  if (status === 'pending') {
+  if (status === 'pending' || status === 'pending_verification') {
     return (
       <LinearGradient colors={[brand.cyberPurple, brand.electricNeonBlue]} style={styles.shell}>
         <View style={styles.inner}>
@@ -30,6 +30,26 @@ const StatusBanner = ({ status, requestedRole, rejectReason, actionLabel, onPres
           <Text style={styles.sub} numberOfLines={2}>
             Your {roleLabel} suite will unlock soon.
           </Text>
+        </View>
+      </LinearGradient>
+    );
+  }
+
+  if (status === 'needs_more_samples') {
+    return (
+      <LinearGradient colors={['rgba(122, 92, 255, 0.92)', 'rgba(0, 229, 255, 0.82)']} style={styles.shell}>
+        <View style={styles.innerRow}>
+          <View style={styles.copy}>
+            <Text style={styles.title}>More samples needed</Text>
+            <Text style={styles.sub} numberOfLines={2}>
+              Upload clearer portfolio images, an Instagram link, or more tattoo styles to continue.
+            </Text>
+          </View>
+          {onPressAction ? (
+            <Pressable onPress={onPressAction} style={styles.cta} accessibilityRole="button">
+              <Text style={styles.ctaText}>{actionLabel ?? 'Update Profile'}</Text>
+            </Pressable>
+          ) : null}
         </View>
       </LinearGradient>
     );

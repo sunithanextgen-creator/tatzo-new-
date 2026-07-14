@@ -1,102 +1,80 @@
-import React, { useEffect, useMemo, useRef } from 'react';
-import { Animated, Platform, StyleSheet, Text, View } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { useAppTheme } from '../../theme/useAppTheme';
-import type { AppTheme } from '../../theme/theme';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { StyleSheet, View } from 'react-native';
+import { StatusBar } from 'expo-status-bar';
+import { VideoView, useVideoPlayer } from 'expo-video';
 
-const SplashScreen = () => {
-  const { theme } = useAppTheme();
-  const styles = useMemo(() => createStyles(theme), [theme]);
+const splashVideo = require('../../../assets/splash/tatzo-splash.mp4');
+const SPLASH_FAILSAFE_MS = 9000;
 
-  const fade = useRef(new Animated.Value(0)).current;
-  const float = useRef(new Animated.Value(0)).current;
+type SplashScreenProps = {
+  onPlaybackEnd?: () => void;
+};
+
+const SplashScreen = ({ onPlaybackEnd }: SplashScreenProps) => {
+  const didFinishRef = useRef(false);
+  const didStartRef = useRef(false);
+  const player = useVideoPlayer(splashVideo, (videoPlayer) => {
+    videoPlayer.loop = false;
+    videoPlayer.muted = true;
+    videoPlayer.currentTime = 0;
+  });
+
+  const finish = useCallback(() => {
+    if (didFinishRef.current) return;
+    didFinishRef.current = true;
+    onPlaybackEnd?.();
+  }, [onPlaybackEnd]);
 
   useEffect(() => {
-    Animated.parallel([
-      Animated.timing(fade, {
-        toValue: 1,
-        duration: 420,
-        useNativeDriver: Platform.OS !== 'web',
-      }),
-      Animated.loop(
-        Animated.sequence([
-          Animated.timing(float, { toValue: 1, duration: 1200, useNativeDriver: Platform.OS !== 'web' }),
-          Animated.timing(float, { toValue: 0, duration: 1200, useNativeDriver: Platform.OS !== 'web' }),
-        ]),
-      ),
-    ]).start();
-  }, [fade, float]);
+    const startPlayback = () => {
+      if (didStartRef.current) return;
+      didStartRef.current = true;
+      player.currentTime = 0;
+      player.play();
+    };
 
-  const translateY = float.interpolate({ inputRange: [0, 1], outputRange: [0, -6] });
+    if (player.status === 'readyToPlay') startPlayback();
+
+    const statusSubscription = player.addListener('statusChange', ({ status }) => {
+      if (status === 'readyToPlay') startPlayback();
+      if (status === 'error') setTimeout(finish, 900);
+    });
+    const endSubscription = player.addListener('playToEnd', finish);
+    const failsafe = setTimeout(finish, SPLASH_FAILSAFE_MS);
+    return () => {
+      statusSubscription.remove();
+      endSubscription.remove();
+      clearTimeout(failsafe);
+    };
+  }, [finish, player]);
 
   return (
-    <SafeAreaView style={styles.safeArea}>
-      <LinearGradient colors={theme.gradients.canvas} style={styles.container}>
-        <View style={styles.glowA} />
-        <View style={styles.glowB} />
-
-        <Animated.View style={[styles.center, { opacity: fade, transform: [{ translateY }] }]}>
-          <Text style={styles.brand}>TATZO</Text>
-          <Text style={styles.tagline}>Inks Meets Intelligence</Text>
-        </Animated.View>
-      </LinearGradient>
-    </SafeAreaView>
+    <View style={styles.container}>
+      <StatusBar hidden />
+      <VideoView
+        player={player}
+        style={styles.video}
+        nativeControls={false}
+        contentFit="contain"
+        fullscreenOptions={{ enable: false }}
+        useExoShutter={false}
+      />
+    </View>
   );
 };
 
-const createStyles = (theme: AppTheme) =>
-  StyleSheet.create({
-    safeArea: {
-      flex: 1,
-      backgroundColor: theme.colors.background,
-    },
-    container: {
-      flex: 1,
-      alignItems: 'center',
-      justifyContent: 'center',
-      paddingHorizontal: 24,
-    },
-    glowA: {
-      position: 'absolute',
-      top: -60,
-      right: -70,
-      width: 220,
-      height: 220,
-      borderRadius: 110,
-      backgroundColor: 'rgba(0, 229, 255, 0.1)',
-    },
-    glowB: {
-      position: 'absolute',
-      left: -80,
-      bottom: -90,
-      width: 260,
-      height: 260,
-      borderRadius: 130,
-      backgroundColor: 'rgba(122, 92, 255, 0.12)',
-    },
-    center: {
-      alignItems: 'center',
-      gap: 10,
-    },
-    brand: {
-      color: theme.mode === 'light' ? theme.colors.text : theme.colors.textInverse,
-      fontSize: 54,
-      lineHeight: 58,
-      fontWeight: '900',
-      letterSpacing: 6,
-      fontFamily: theme.fonts.display,
-    },
-    tagline: {
-      color: theme.colors.textMuted,
-      fontSize: 14,
-      fontWeight: '800',
-      letterSpacing: 2,
-      textTransform: 'uppercase',
-      textAlign: 'center',
-      fontFamily: theme.fonts.body,
-    },
-  });
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#000000',
+    overflow: 'hidden',
+  },
+  video: {
+    ...StyleSheet.absoluteFillObject,
+  },
+});
 
 export default SplashScreen;
 

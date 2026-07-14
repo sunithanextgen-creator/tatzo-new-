@@ -9,14 +9,22 @@ import {
   getVerificationWithUser,
   listPendingDealerVerifications,
   listPendingVerifications,
+  listFinalPaymentBookings,
+  listRecentArtistTransactions,
+  listRecentPostReports,
   listRecentVerifications,
   rejectDealerVerification,
   rejectVerification,
+  updateArtistTransactionPayout,
+  updateFinalPaymentBookingAdmin,
 } from '../services';
-import type { AdminDashboardMetrics, DealerVerificationDoc, VerificationDoc } from '../types';
+import type { AdminDashboardMetrics, ArtistTransactionDoc, DealerVerificationDoc, FinalPaymentBookingDoc, PostReportDoc, VerificationDoc } from '../types';
 
 type VerificationRow = VerificationDoc & { id: string };
 type DealerVerificationRow = DealerVerificationDoc & { id: string };
+type ArtistTransactionRow = ArtistTransactionDoc & { id: string };
+type FinalPaymentBookingRow = FinalPaymentBookingDoc & { id: string };
+type PostReportRow = PostReportDoc & { id: string };
 
 const toReadableDate = (value: unknown) => {
   if (!value) return '-';
@@ -37,6 +45,9 @@ export default function AdminDashboard() {
   const [pendingRows, setPendingRows] = useState<VerificationRow[]>([]);
   const [pendingDealerRows, setPendingDealerRows] = useState<DealerVerificationRow[]>([]);
   const [recentRows, setRecentRows] = useState<VerificationRow[]>([]);
+  const [transactionRows, setTransactionRows] = useState<ArtistTransactionRow[]>([]);
+  const [finalPaymentRows, setFinalPaymentRows] = useState<FinalPaymentBookingRow[]>([]);
+  const [reportRows, setReportRows] = useState<PostReportRow[]>([]);
   const [queryText, setQueryText] = useState('');
   const [roleFilter, setRoleFilter] = useState<'all' | 'artist' | 'dealer'>('all');
   const [loading, setLoading] = useState(true);
@@ -50,16 +61,22 @@ export default function AdminDashboard() {
     setError('');
 
     try {
-      const [nextMetrics, pending, pendingDealers, recent] = await Promise.all([
+      const [nextMetrics, pending, pendingDealers, recent, finalPayments, transactions, reports] = await Promise.all([
         getAdminDashboardMetrics(),
         listPendingVerifications(),
         listPendingDealerVerifications(),
         listRecentVerifications(10),
+        listFinalPaymentBookings(30),
+        listRecentArtistTransactions(20),
+        listRecentPostReports(30),
       ]);
       setMetrics(nextMetrics);
       setPendingRows(pending);
       setPendingDealerRows(pendingDealers);
       setRecentRows(recent);
+      setFinalPaymentRows(finalPayments);
+      setTransactionRows(transactions);
+      setReportRows(reports);
     } catch (e: any) {
       const message = e?.message ?? 'Failed to load dashboard metrics.';
       const hasPermissionIssue =
@@ -175,6 +192,36 @@ export default function AdminDashboard() {
     }
   };
 
+  const onUpdatePayout = async (id: string, payoutStatus: NonNullable<ArtistTransactionDoc['payoutStatus']>) => {
+    if (!id) return;
+    const notes = window.prompt('Internal payout note', '') ?? '';
+    setActionUid(id);
+    setError('');
+    try {
+      await updateArtistTransactionPayout(id, payoutStatus, notes);
+      await loadAll(false);
+    } catch (e: any) {
+      setError(e?.message ?? 'Payout update failed.');
+    } finally {
+      setActionUid('');
+    }
+  };
+
+  const onUpdateFinalPayment = async (id: string, action: 'completed' | 'disputed') => {
+    if (!id) return;
+    const note = window.prompt('Internal final payment note', action === 'disputed' ? 'Admin marked final payment disputed.' : 'Admin marked final payment completed.') ?? '';
+    setActionUid(id);
+    setError('');
+    try {
+      await updateFinalPaymentBookingAdmin(id, action, note);
+      await loadAll(false);
+    } catch (e: any) {
+      setError(e?.message ?? 'Final payment update failed.');
+    } finally {
+      setActionUid('');
+    }
+  };
+
   const filteredPending = useMemo(() => {
     const query = queryText.trim().toLowerCase();
     return pendingRows.filter((row) => {
@@ -253,6 +300,24 @@ export default function AdminDashboard() {
 
       {!loading && metrics ? (
         <>
+          <div className="ops-grid">
+            <div className="ops-card urgent">
+              <span>Needs action</span>
+              <strong>{metrics.pendingVerifications + metrics.pendingDealerVerifications}</strong>
+              <p>Artist/dealer applications waiting for review.</p>
+            </div>
+            <div className="ops-card">
+              <span>Payment watch</span>
+              <strong>{finalPaymentRows.length}</strong>
+              <p>Final payment records to monitor or resolve.</p>
+            </div>
+            <div className="ops-card">
+              <span>User safety</span>
+              <strong>{reportRows.filter((row) => row.status === 'open').length}</strong>
+              <p>Open user reports from Socio Feed.</p>
+            </div>
+          </div>
+
           <div className="kpi-grid">
             <div className="kpi-card"><span>Total Users</span><strong>{metrics.totalUsers}</strong></div>
             <div className="kpi-card"><span>Artists</span><strong>{metrics.totalArtists}</strong></div>
@@ -293,7 +358,11 @@ export default function AdminDashboard() {
 
           <div className="queue-card">
             <div className="queue-head">
-              <h3>Pending Artist/Dealer Verification Queue</h3>
+              <div>
+                <span className="eyebrow">Action queue</span>
+                <h3>Artist applications</h3>
+                <p className="muted small">Review only the essentials: studio, ID, location and certificate.</p>
+              </div>
               <div className="filter-row">
                 <input
                   value={queryText}
@@ -352,7 +421,8 @@ export default function AdminDashboard() {
           </div>
 
           <div className="queue-card">
-            <h3>Pending Dealer Requests (Secondary Flow)</h3>
+            <span className="eyebrow">Secondary queue</span>
+            <h3>Dealer requests</h3>
             <div className="table-wrap">
               <table className="data-table">
                 <thead>
@@ -387,6 +457,135 @@ export default function AdminDashboard() {
               </table>
             </div>
             {filteredDealers.length === 0 ? <div className="hint">No pending dealer requests.</div> : null}
+          </div>
+
+          <div className="queue-card">
+            <span className="eyebrow">Money monitor</span>
+            <h3>Final payments</h3>
+            <p className="muted small">Tracks direct artist payments: pending, user marked paid, disputed, and completed.</p>
+            <div className="table-wrap">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Booking</th>
+                    <th>Artist</th>
+                    <th>User</th>
+                    <th>Amount</th>
+                    <th>Method</th>
+                    <th>Status</th>
+                    <th>Proof / Note</th>
+                    <th>Updated</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {finalPaymentRows.map((row) => (
+                    <tr key={row.id}>
+                      <td>{row.id}</td>
+                      <td>{row.artistName ?? row.artistUid ?? '-'}</td>
+                      <td>{row.userName ?? row.userEmail ?? row.userUid ?? '-'}</td>
+                      <td>Rs. {row.finalStudioAmount ?? '-'}</td>
+                      <td>{String(row.artistPaymentMethod ?? '-').replace(/_/g, ' ')}</td>
+                      <td><span className={`status-pill status-${row.finalPaymentStatus ?? row.status ?? 'pending'}`}>{String(row.finalPaymentStatus ?? row.status ?? 'pending').replace(/_/g, ' ').toUpperCase()}</span></td>
+                      <td>
+                        {row.paymentProofUrl ? <a href={row.paymentProofUrl} target="_blank" rel="noreferrer">View proof</a> : <span className="muted small">No proof</span>}
+                        {row.finalPaymentDisputeNote ? <div className="muted small">{row.finalPaymentDisputeNote}</div> : null}
+                      </td>
+                      <td>{toReadableDate(row.updatedAt)}</td>
+                      <td>
+                        <div className="table-actions">
+                          <button disabled={actionUid === row.id} onClick={() => void onUpdateFinalPayment(row.id, 'completed')}>Complete</button>
+                          <button disabled={actionUid === row.id} onClick={() => void onUpdateFinalPayment(row.id, 'disputed')} className="danger-btn">Dispute</button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {finalPaymentRows.length === 0 ? <div className="hint">No final payment tracking records yet.</div> : null}
+          </div>
+
+          <div className="queue-card">
+            <span className="eyebrow">Payout tracking</span>
+            <h3>Artist transactions</h3>
+            <p className="muted small">Completed booking fee records and manual payout status. No automatic payout is triggered here.</p>
+            <div className="table-wrap">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Booking</th>
+                    <th>Artist</th>
+                    <th>User</th>
+                    <th>Fee</th>
+                    <th>Final</th>
+                    <th>Quote</th>
+                    <th>Payout</th>
+                    <th>Proof</th>
+                    <th>Method</th>
+                    <th>Completed</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {transactionRows.map((row) => (
+                    <tr key={row.id}>
+                      <td>{row.bookingId}</td>
+                      <td>{row.artistUid}</td>
+                      <td>{row.userUid}</td>
+                      <td>Rs. {row.bookingConfirmationFee ?? '-'}</td>
+                      <td>Rs. {row.finalStudioAmount ?? row.finalPaymentAmount ?? '-'}</td>
+                      <td>{row.quotedRange ?? '-'}</td>
+                      <td><span className={`status-pill status-${row.payoutStatus ?? 'pending'}`}>{String(row.payoutStatus ?? 'pending').toUpperCase()}</span><div className="muted small">{row.finalPaymentId ?? ''}</div></td>
+                      <td>{row.paymentProofUrl ? <a href={row.paymentProofUrl} target="_blank" rel="noreferrer">Proof</a> : '-'}</td>
+                      <td>{row.payoutMethod ?? '-'}</td>
+                      <td>{toReadableDate(row.completedAt)}</td>
+                      <td>
+                        <div className="table-actions">
+                          <button disabled={actionUid === row.id} onClick={() => void onUpdatePayout(row.id, 'processing')}>Processing</button>
+                          <button disabled={actionUid === row.id} onClick={() => void onUpdatePayout(row.id, 'paid')}>Paid</button>
+                          <button disabled={actionUid === row.id} onClick={() => void onUpdatePayout(row.id, 'failed')} className="danger-btn">Failed</button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {transactionRows.length === 0 ? <div className="hint">No completed artist transactions yet.</div> : null}
+          </div>
+
+          <div className="queue-card">
+            <span className="eyebrow">Trust and safety</span>
+            <h3>User post reports</h3>
+            <p className="muted small">Reports submitted from Socio Feed. Deterministic report IDs prevent duplicate spam.</p>
+            <div className="table-wrap">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Post</th>
+                    <th>Post Owner</th>
+                    <th>Reported By</th>
+                    <th>Reason</th>
+                    <th>Status</th>
+                    <th>Created</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {reportRows.map((row) => (
+                    <tr key={row.id}>
+                      <td>{row.postId}</td>
+                      <td>{row.postOwnerUid ?? '-'}</td>
+                      <td>{row.reportedByEmail ?? row.reportedByUid}</td>
+                      <td>{row.reason}</td>
+                      <td><span className={`status-pill status-${row.status ?? 'open'}`}>{String(row.status ?? 'open').toUpperCase()}</span></td>
+                      <td>{toReadableDate(row.createdAt)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {reportRows.length === 0 ? <div className="hint">No user post reports yet.</div> : null}
           </div>
 
           <div className="queue-card">

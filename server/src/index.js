@@ -1,4 +1,4 @@
-﻿import crypto from 'crypto';
+import crypto from 'crypto';
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
@@ -16,8 +16,9 @@ app.use(express.json());
 
 const PORT = Number(process.env.PORT || 5055);
 console.log('TATZO: loaded env from', path.join(__dirname, '..', '.env'));
-const KEY_ID = process.env.RAZORPAY_KEY_ID || '';
-const KEY_SECRET = process.env.RAZORPAY_KEY_SECRET || '';
+const cleanEnvSecret = (value) => String(value || '').trim().replace(/^['"]|['"]$/g, '');
+const KEY_ID = cleanEnvSecret(process.env.RAZORPAY_KEY_ID);
+const KEY_SECRET = cleanEnvSecret(process.env.RAZORPAY_KEY_SECRET);
 const PAYMENT_MODE = KEY_ID.startsWith('rzp_test_') ? 'test' : KEY_ID.startsWith('rzp_live_') ? 'live' : 'unknown';
 console.log('TATZO: RAZORPAY_KEY_ID present?', Boolean(KEY_ID));
 console.log('TATZO: RAZORPAY_KEY_SECRET present?', Boolean(KEY_SECRET));
@@ -28,6 +29,63 @@ const SUBSCRIPTION_BASE_RUPEES = 499;
 const SUBSCRIPTION_GST_RATE = 0.18;
 const SUBSCRIPTION_GST_RUPEES = Number((SUBSCRIPTION_BASE_RUPEES * SUBSCRIPTION_GST_RATE).toFixed(2));
 const SUBSCRIPTION_TOTAL_RUPEES = Number((SUBSCRIPTION_BASE_RUPEES + SUBSCRIPTION_GST_RUPEES).toFixed(2));
+const escapeHtml = (value) =>
+  String(value ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#039;');
+
+const getRazorpayErrorHint = (status, details) => {
+  const description = details?.error?.description || details?.description || '';
+  if (status === 401 || /authentication failed/i.test(description)) {
+    return 'Razorpay authentication failed. Use a matching Key ID and Key Secret from the same Razorpay mode, then restart the Tatzo payment server.';
+  }
+  if (status === 400) {
+    return description || 'Razorpay rejected this payment request. Check amount, receipt, and required customer fields.';
+  }
+  return 'Payment could not be started right now. Try again after checking the server logs.';
+};
+
+const renderPaymentErrorPage = ({ status, error, details }) => {
+  const hint = getRazorpayErrorHint(status, details);
+  const description = details?.error?.description || details?.description || '';
+  const code = details?.error?.code || details?.code || '';
+  return `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Tatzo Payment Issue</title>
+  <style>
+    body{margin:0;font-family:Arial,Helvetica,sans-serif;background:#080b12;color:#f5f7fa;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:18px;box-sizing:border-box;}
+    .card{width:min(560px,94vw);border:1px solid rgba(255,255,255,.12);border-radius:20px;padding:20px;background:linear-gradient(145deg,rgba(18,23,34,.96),rgba(12,8,22,.96));box-shadow:0 22px 46px rgba(0,0,0,.45)}
+    .brand{letter-spacing:3px;font-weight:900;font-size:12px;color:#00e5ff;text-transform:uppercase}
+    .title{font-size:22px;font-weight:900;margin:10px 0 8px}
+    .hint{line-height:1.55;color:rgba(245,247,250,.84);font-size:14px;margin:0 0 14px}
+    .box{border:1px solid rgba(255,93,122,.35);background:rgba(255,93,122,.10);border-radius:14px;padding:12px;margin-top:12px;color:#ffdbe2;font-size:13px;line-height:1.5;word-break:break-word}
+    .fine{margin-top:14px;color:rgba(245,247,250,.62);font-size:12px;line-height:1.5}
+    code{background:rgba(255,255,255,.08);border-radius:7px;padding:2px 6px;color:#fff}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="brand">TATZO PAYMENTS</div>
+    <div class="title">Payment could not start</div>
+    <p class="hint">${escapeHtml(hint)}</p>
+    <div class="box">
+      Status: <b>${escapeHtml(status)}</b><br/>
+      Mode: <b>${escapeHtml(PAYMENT_MODE.toUpperCase())}</b><br/>
+      Error: ${escapeHtml(error)}${description ? `<br/>Razorpay: ${escapeHtml(description)}` : ''}${code ? `<br/>Code: ${escapeHtml(code)}` : ''}
+    </div>
+    <div class="fine">
+      For test payments, keep both values from Razorpay Dashboard Test Mode: <code>RAZORPAY_KEY_ID</code> and <code>RAZORPAY_KEY_SECRET</code>. After changing <code>server/.env</code>, stop and restart <code>npm run dev</code> inside the server folder.
+    </div>
+  </div>
+</body>
+</html>`;
+};
 
 const assertConfigured = () => {
   if (!KEY_ID || !KEY_SECRET) {
@@ -183,7 +241,7 @@ app.post('/api/razorpay/verify', (req, res, next) => {
       return res.status(400).json({ verified: false, error: 'Missing fields' });
     }
     const verified = verifySignature({ orderId, paymentId, signature });
-    res.json({ verified });
+    res.json({ ok: verified, verified, localOnly: true, bookingUpdated: false });
   } catch (e) {
     next(e);
   }
@@ -365,14 +423,20 @@ app.use((err, req, res, next) => {
   const body = {
     error: err?.message || 'Server error',
     details: err?.details || null,
+    razorpayMode: PAYMENT_MODE,
+    keyPrefix: KEY_ID ? KEY_ID.slice(0, 9) : null,
   };
+
+  const wantsHtml = req.path === '/pay' || String(req.headers.accept || '').includes('text/html');
+  if (wantsHtml) {
+    res.status(status).setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(renderPaymentErrorPage({ status, error: body.error, details: body.details }));
+    return;
+  }
+
   res.status(status).json(body);
 });
-
 app.listen(PORT, () => {
   console.log(`tatzo-payments-server running on http://localhost:${PORT}`);
 });
-
-
-
 

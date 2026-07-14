@@ -57,19 +57,359 @@ service cloud.firestore {
           || request.resource.data.likesCount == resource.data.get('likesCount', 0) - 1
         );
     }
+    function bookingChangedKeys() {
+      return request.resource.data.diff(resource.data).affectedKeys();
+    }
+
+    function bookingParticipantUnchanged() {
+      return request.resource.data.userUid == resource.data.userUid
+        && request.resource.data.artistUid == resource.data.artistUid
+        && request.resource.data.dateISO == resource.data.dateISO
+        && request.resource.data.slotId == resource.data.slotId;
+    }
+
+    function isUserBookingCancel() {
+      return isSignedIn()
+        && resource.data.userUid == request.auth.uid
+        && bookingParticipantUnchanged()
+        && !(resource.data.status in ['confirmed', 'completed', 'cancelled', 'rejected', 'quote_expired'])
+        && request.resource.data.status == 'cancelled'
+        && bookingChangedKeys().hasOnly(['status', 'cancelledAt', 'updatedAt']);
+    }
+
+    function isBookingReminderUpdateByParticipant() {
+      return isSignedIn()
+        && (resource.data.userUid == request.auth.uid || resource.data.artistUid == request.auth.uid)
+        && resource.data.status == 'confirmed'
+        && request.resource.data.status == resource.data.status
+        && bookingParticipantUnchanged()
+        && bookingChangedKeys().hasOnly([
+          'reminderCreated',
+          'reminderSentAt',
+          'reminderScheduledFor',
+          'reminderDayBeforeCreated',
+          'reminderDayBeforeSentAt',
+          'reminderDayBeforeScheduledFor',
+          'remindersCreated',
+          'remindersSentAt',
+          'remindersScheduledFor',
+          'updatedAt'
+        ]);
+    }
+
+    function isUserPaymentTimeoutUpdate() {
+      return isSignedIn()
+        && resource.data.userUid == request.auth.uid
+        && resource.data.status in ['quote_sent_payment_pending', 'artist_approved_payment_pending', 'payment_failed']
+        && request.resource.data.status == 'payment_timeout'
+        && bookingParticipantUnchanged()
+        && bookingChangedKeys().hasOnly(['status', 'updatedAt']);
+    }
+
+    function isQuoteExpiryCleanupByParticipant() {
+      return isSignedIn()
+        && (resource.data.userUid == request.auth.uid || resource.data.artistUid == request.auth.uid)
+        && resource.data.status == 'quote_sent_payment_pending'
+        && request.resource.data.status == 'quote_expired'
+        && bookingParticipantUnchanged()
+        && bookingChangedKeys().hasOnly(['status', 'quoteExpiredAt', 'quoteExpiredAtCleanupChecked', 'updatedAt']);
+    }
+
+    function isArtistPostingEnabled(uid) {
+      return isApprovedArtist(uid)
+        && userData(uid).get('postingEnabled', false) == true;
+    }
+
+    function isArtistNoResponseExpiryCleanup() {
+      return isSignedIn()
+        && (resource.data.userUid == request.auth.uid || resource.data.artistUid == request.auth.uid)
+        && resource.data.status in ['pending_artist_quote', 'pending_artist_approval']
+        && request.resource.data.status == 'rejected'
+        && request.resource.data.rejectReason == 'Artist did not respond in time.'
+        && bookingParticipantUnchanged()
+        && resource.data.createdAt is timestamp
+        && request.time > resource.data.createdAt + duration.value(24, 'h')
+        && bookingChangedKeys().hasOnly(['status', 'rejectReason', 'updatedAt']);
+    }
+
+    function isArtistQuoteUpdate() {
+      return isSignedIn()
+        && resource.data.artistUid == request.auth.uid
+        && resource.data.status == 'pending_artist_quote'
+        && request.resource.data.status == 'quote_sent_payment_pending'
+        && bookingParticipantUnchanged()
+        && request.resource.data.quotedByArtistUid == request.auth.uid
+        && request.resource.data.quoteReason is string
+        && request.resource.data.quoteReason.size() >= 8
+        && request.resource.data.quoteReason.size() <= 500
+        && request.resource.data.bookingConfirmationFee == 249
+        && request.resource.data.depositAmount == 249
+        && bookingChangedKeys().hasOnly([
+          'status', 'quoteRange', 'quoteRangeLabel', 'quoteReason', 'quotedAt', 'quoteExpiresAt',
+          'quotedByArtistUid', 'bookingConfirmationFee', 'depositAmount', 'updatedAt'
+        ]);
+    }
+
+    function isArtistRejectUpdate() {
+      return isSignedIn()
+        && resource.data.artistUid == request.auth.uid
+        && resource.data.status in ['pending_artist_quote', 'quote_sent_payment_pending', 'pending_artist_approval', 'artist_approved_payment_pending']
+        && request.resource.data.status == 'rejected'
+        && bookingParticipantUnchanged()
+        && bookingChangedKeys().hasOnly(['status', 'rejectReason', 'updatedAt']);
+    }
+
+    function isArtistCompleteUpdate() {
+      return isSignedIn()
+        && resource.data.artistUid == request.auth.uid
+        && resource.data.status == 'confirmed'
+        && request.resource.data.status == 'completed'
+        && bookingParticipantUnchanged()
+        && bookingChangedKeys().hasOnly(['status', 'completedAt', 'updatedAt']);
+    }
+
+    function isUserCompletionRequest() {
+      return isSignedIn()
+        && resource.data.userUid == request.auth.uid
+        && resource.data.status == 'confirmed'
+        && request.resource.data.status == resource.data.status
+        && request.resource.data.completionRequestedByUser == true
+        && bookingParticipantUnchanged()
+        && bookingChangedKeys().hasOnly(['completionRequestedByUser', 'completionRequestedAt', 'updatedAt']);
+    }
+
+    function isUserRescheduleRequest() {
+      return isSignedIn()
+        && resource.data.userUid == request.auth.uid
+        && resource.data.status == 'confirmed'
+        && request.resource.data.status == 'reschedule_requested'
+        && bookingParticipantUnchanged()
+        && request.resource.data.proposedDateISO is string
+        && request.resource.data.proposedSlotId in ['morning', 'afternoon', 'evening']
+        && bookingChangedKeys().hasOnly([
+          'status',
+          'originalDateISO',
+          'originalSlotId',
+          'originalSlotTimeLabel',
+          'proposedDateISO',
+          'proposedSlotId',
+          'proposedSlotTimeLabel',
+          'rescheduleRequestedAt',
+          'rescheduleRequestedByUid',
+          'updatedAt'
+        ]);
+    }
+
+    function isArtistAcceptReschedule() {
+      return isSignedIn()
+        && resource.data.artistUid == request.auth.uid
+        && resource.data.status == 'reschedule_requested'
+        && request.resource.data.status == 'confirmed'
+        && request.resource.data.dateISO == resource.data.proposedDateISO
+        && request.resource.data.slotId == resource.data.proposedSlotId
+        && request.resource.data.slotTimeLabel == resource.data.proposedSlotTimeLabel
+        && request.resource.data.userUid == resource.data.userUid
+        && request.resource.data.artistUid == resource.data.artistUid
+        && bookingChangedKeys().hasOnly([
+          'status',
+          'dateISO',
+          'slotId',
+          'slotTimeLabel',
+          'proposedDateISO',
+          'proposedSlotId',
+          'proposedSlotTimeLabel',
+          'rescheduleResolvedAt',
+          'updatedAt'
+        ]);
+    }
+
+    function isArtistRejectReschedule() {
+      return isSignedIn()
+        && resource.data.artistUid == request.auth.uid
+        && resource.data.status == 'reschedule_requested'
+        && request.resource.data.status == 'confirmed'
+        && request.resource.data.dateISO == resource.data.dateISO
+        && request.resource.data.slotId == resource.data.slotId
+        && request.resource.data.userUid == resource.data.userUid
+        && request.resource.data.artistUid == resource.data.artistUid
+        && bookingChangedKeys().hasOnly([
+          'status',
+          'proposedDateISO',
+          'proposedSlotId',
+          'proposedSlotTimeLabel',
+          'rescheduleResolvedAt',
+          'updatedAt'
+        ]);
+    }
+
+    function isArtistFinalAmountUpdate() {
+      return isSignedIn()
+        && resource.data.artistUid == request.auth.uid
+        && resource.data.status == 'confirmed'
+        && request.resource.data.status == 'final_payment_pending'
+        && bookingParticipantUnchanged()
+        && request.resource.data.finalStudioAmount is number
+        && request.resource.data.finalStudioAmount > 0
+        && request.resource.data.finalStudioAmount <= 1000000
+        && request.resource.data.finalAmountNote is string
+        && request.resource.data.finalAmountNote.size() > 0
+        && request.resource.data.finalAmountNote.size() <= 500
+        && request.resource.data.finalPaymentStatus == 'pending'
+        && request.resource.data.artistPaymentMethod in ['upi', 'razorpay_link']
+        && (
+          (request.resource.data.artistPaymentMethod == 'upi'
+            && request.resource.data.artistUpiId is string
+            && request.resource.data.artistUpiId.size() >= 4)
+          ||
+          (request.resource.data.artistPaymentMethod == 'razorpay_link'
+            && request.resource.data.artistRazorpayPaymentLink is string
+            && request.resource.data.artistRazorpayPaymentLink.size() >= 10)
+        )
+        && bookingChangedKeys().hasOnly([
+          'status', 'finalStudioAmount', 'finalAmountNote', 'finalAmountSubmittedAt',
+          'finalPaymentStatus', 'artistPaymentMethod', 'artistUpiId', 'artistRazorpayPaymentLink', 'updatedAt'
+        ]);
+    }
+
+    function isUserMarkedFinalPaidUpdate() {
+      return isSignedIn()
+        && resource.data.userUid == request.auth.uid
+        && resource.data.status == 'final_payment_pending'
+        && request.resource.data.status == resource.data.status
+        && bookingParticipantUnchanged()
+        && request.resource.data.finalPaymentStatus == 'user_marked_paid'
+        && resource.data.get('finalPaymentStatus', 'pending') in ['pending', 'disputed']
+        && (!('paymentProofUrl' in request.resource.data) || request.resource.data.paymentProofUrl is string)
+        && bookingChangedKeys().hasOnly(['finalPaymentStatus', 'userMarkedPaidAt', 'paymentProofUrl', 'paymentProofMeta', 'updatedAt']);
+    }
+
+    function isArtistFinalPaymentConfirmUpdate() {
+      return isSignedIn()
+        && resource.data.artistUid == request.auth.uid
+        && resource.data.status == 'final_payment_pending'
+        && resource.data.get('finalPaymentStatus', 'pending') == 'user_marked_paid'
+        && request.resource.data.status == 'completed'
+        && request.resource.data.finalPaymentStatus == 'artist_confirmed_paid'
+        && bookingParticipantUnchanged()
+        && bookingChangedKeys().hasOnly(['status', 'finalPaymentStatus', 'completedAt', 'updatedAt']);
+    }
+
+    function isArtistFinalPaymentDisputeUpdate() {
+      return isSignedIn()
+        && resource.data.artistUid == request.auth.uid
+        && resource.data.status == 'final_payment_pending'
+        && request.resource.data.status == resource.data.status
+        && request.resource.data.finalPaymentStatus == 'disputed'
+        && resource.data.get('finalPaymentStatus', 'pending') in ['pending', 'user_marked_paid']
+        && bookingParticipantUnchanged()
+        && request.resource.data.finalPaymentDisputeNote is string
+        && request.resource.data.finalPaymentDisputeNote.size() <= 500
+        && bookingChangedKeys().hasOnly(['finalPaymentStatus', 'finalPaymentDisputedAt', 'finalPaymentDisputeNote', 'updatedAt']);
+    }
+
+    function isLegacyArtistApprovalUpdate() {
+      return isSignedIn()
+        && resource.data.artistUid == request.auth.uid
+        && resource.data.status == 'pending_artist_approval'
+        && request.resource.data.status == 'artist_approved_payment_pending'
+        && bookingParticipantUnchanged()
+        && request.resource.data.bookingConfirmationFee == 249
+        && request.resource.data.depositAmount == 249
+        && bookingChangedKeys().hasOnly(['status', 'artistApprovedAt', 'bookingConfirmationFee', 'depositAmount', 'updatedAt']);
+    }
+
+    function isLegacyPendingPaymentMigrationByUser() {
+      return isSignedIn()
+        && resource.data.userUid == request.auth.uid
+        && resource.data.status == 'pending_payment'
+        && request.resource.data.status == 'pending_artist_quote'
+        && bookingParticipantUnchanged()
+        && request.resource.data.bookingConfirmationFee == 249
+        && request.resource.data.depositAmount == 249
+        && bookingChangedKeys().hasOnly(['status', 'bookingConfirmationFee', 'depositAmount', 'migratedFromPendingPaymentAt', 'updatedAt']);
+    }
 
     function ownerLocationLockedWhenPending(uid) {
-      return userVerification(uid) != 'pending'
+      return !(userVerification(uid) in ['pending', 'pending_verification'])
         || (
           request.resource.data.locationCity == resource.data.locationCity
           && request.resource.data.locationArea == resource.data.locationArea
         );
     }
 
+    function ownerVerificationTransitionSafe() {
+      let before = resource.data.get('verificationStatus', 'unsubmitted');
+      let after = request.resource.data.get('verificationStatus', before);
+      return after == before
+        || (
+          after == 'pending_verification'
+          && before in ['unsubmitted', 'rejected', 'needs_more_samples']
+        );
+    }
+
+    function ownerCannotChangeAdminArtistAccess() {
+      return !(
+        resource.data.get('postingEnabled', false) != true
+        && request.resource.data.get('postingEnabled', false) == true
+      )
+      && !(
+        resource.data.get('verifiedPro', false) != true
+        && request.resource.data.get('verifiedPro', false) == true
+      )
+      && !(
+        resource.data.get('authorizedSeller', false) != true
+        && request.resource.data.get('authorizedSeller', false) == true
+      )
+      && !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+        'verificationApprovedAt',
+        'verificationApprovedBy'
+      ]);
+    }
+
+    function ownerVerificationReviewFieldsSafe() {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+        'reviewedBy',
+        'reviewedAt',
+        'adminFeedback',
+        'rejectReason',
+        'source',
+        'foundingPlan',
+        'foundingBadge',
+        'foundingAccessAmount'
+      ]);
+    }
+
+    function ownerVerificationReviewFieldsBlank() {
+      return request.resource.data.get('reviewedBy', null) == null
+        && request.resource.data.get('reviewedAt', null) == null
+        && request.resource.data.get('adminFeedback', '') == ''
+        && request.resource.data.get('rejectReason', '') == ''
+        && request.resource.data.get('source', 'artist_submission') == 'artist_submission'
+        && request.resource.data.get('foundingPlan', null) == null
+        && request.resource.data.get('foundingBadge', null) == null
+        && request.resource.data.get('foundingAccessAmount', null) == null;
+    }
+
+    function ownerArtistAccessFieldsUnchanged() {
+      return request.resource.data.get('verificationStatus', resource.data.get('verificationStatus', 'unsubmitted'))
+          == resource.data.get('verificationStatus', 'unsubmitted')
+        && request.resource.data.get('postingEnabled', resource.data.get('postingEnabled', false))
+          == resource.data.get('postingEnabled', false)
+        && request.resource.data.get('verifiedPro', resource.data.get('verifiedPro', false))
+          == resource.data.get('verifiedPro', false);
+    }
+
     function ownerCreateSubscriptionSafe() {
       return request.resource.data.get('subscriptionStatus', 'inactive') != 'active'
-        && request.resource.data.get('subscriptionPaymentStatus', 'idle') != 'paid'
+        && !(request.resource.data.get('subscriptionPaymentStatus', 'idle') in ['paid', 'paid_pending_verification'])
         && request.resource.data.get('subscriptionVerificationStatus', 'failed') != 'verified';
+    }
+
+    function ownerCannotApproveCertificate() {
+      return !(
+        resource.data.get('certificateReviewStatus', 'pending') != 'approved'
+        && request.resource.data.get('certificateReviewStatus', resource.data.get('certificateReviewStatus', 'pending')) == 'approved'
+      );
     }
 
     function ownerCannotEscalateSubscription() {
@@ -78,8 +418,8 @@ service cloud.firestore {
         && request.resource.data.get('subscriptionStatus', resource.data.get('subscriptionStatus', 'inactive')) == 'active'
       )
       && !(
-        resource.data.get('subscriptionPaymentStatus', 'idle') != 'paid'
-        && request.resource.data.get('subscriptionPaymentStatus', resource.data.get('subscriptionPaymentStatus', 'idle')) == 'paid'
+        !(resource.data.get('subscriptionPaymentStatus', 'idle') in ['paid', 'paid_pending_verification'])
+        && request.resource.data.get('subscriptionPaymentStatus', resource.data.get('subscriptionPaymentStatus', 'idle')) in ['paid', 'paid_pending_verification']
       )
       && !(
         resource.data.get('subscriptionVerificationStatus', 'failed') != 'verified'
@@ -89,12 +429,22 @@ service cloud.firestore {
 
     match /users/{userId} {
       allow read: if isOwner(userId) || isAdmin();
-      allow create: if isAdmin() || (isOwner(userId) && ownerCreateSubscriptionSafe());
+      allow create: if isAdmin() || (
+        isOwner(userId)
+        && ownerCreateSubscriptionSafe()
+        && request.resource.data.get('certificateReviewStatus', 'pending') != 'approved'
+        && request.resource.data.get('verificationStatus', 'unsubmitted') in ['unsubmitted', 'pending_verification']
+        && request.resource.data.get('postingEnabled', false) != true
+        && request.resource.data.get('verifiedPro', false) != true
+      );
 
       allow update: if isAdmin() || (
         isOwner(userId)
         && request.resource.data.uid == userId
         && ownerCannotEscalateSubscription()
+        && ownerCannotApproveCertificate()
+        && ownerVerificationTransitionSafe()
+        && ownerCannotChangeAdminArtistAccess()
         && (
           !('role' in resource.data)
           || request.resource.data.role == resource.data.role
@@ -120,20 +470,53 @@ service cloud.firestore {
         );
         allow delete: if isOwner(userId) || isAdmin();
       }
+
+      match /savedPosts/{postId} {
+        allow read, create, update, delete: if isOwner(userId) || isAdmin();
+      }
+
+      match /likedPosts/{postId} {
+        allow read, create, update, delete: if isOwner(userId) || isAdmin();
+      }
+
+      match /following/{artistId} {
+        allow read, create, update, delete: if isOwner(userId) || isAdmin();
+      }
+
+      match /blockedUsers/{blockedUserId} {
+        allow read, create, update, delete: if isOwner(userId) || isAdmin();
+      }
+
+      match /reports/{reportId} {
+        allow read, create, update, delete: if isOwner(userId) || isAdmin();
+      }
     }
 
     match /verifications/{userId} {
       allow read: if isOwner(userId) || isAdmin();
 
-      allow create, update: if isAdmin() || (
+      allow create: if isAdmin() || (
         isOwner(userId)
         && request.resource.data.uid == userId
         && request.resource.data.requestedRole in ['artist', 'dealer']
-        && request.resource.data.status == 'pending'
+        && request.resource.data.status == 'pending_verification'
+        && request.resource.data.get('certificateReviewStatus', 'pending') == 'pending'
+        && ownerVerificationReviewFieldsBlank()
         && (
           !userExists(userId)
-          || userVerification(userId) in ['unsubmitted', 'rejected', 'pending']
+          || userVerification(userId) in ['unsubmitted', 'rejected', 'needs_more_samples']
         )
+      );
+
+      allow update: if isAdmin() || (
+        isOwner(userId)
+        && request.resource.data.uid == userId
+        && request.resource.data.requestedRole in ['artist', 'dealer']
+        && request.resource.data.status == 'pending_verification'
+        && resource.data.status in ['pending', 'pending_verification', 'rejected', 'needs_more_samples']
+        && request.resource.data.get('certificateReviewStatus', 'pending') == 'pending'
+        && ownerVerificationReviewFieldsSafe()
+        && userVerification(userId) in ['unsubmitted', 'rejected', 'needs_more_samples']
       );
 
       allow delete: if false;
@@ -148,6 +531,7 @@ service cloud.firestore {
         && userRole(userId) == 'artist'
         && request.resource.data.uid == userId
         && request.resource.data.status == 'pending'
+        && request.resource.data.get('certificateReviewStatus', 'pending') == 'pending'
         && (
           !('dealerRequestStatus' in userData(userId))
           || userData(userId).dealerRequestStatus in ['unsubmitted', 'rejected', 'pending']
@@ -157,10 +541,53 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    match /artistsWaitlist/{artistId} {
+      allow read: if isAdmin() || isOwner(artistId);
+      allow create, update, delete: if isAdmin() || (
+        isOwner(artistId)
+        && request.resource.data.artistId == artistId
+      );
+    }
+
+    match /earlyAccessWaitlist/{leadId} {
+      allow read, update, delete: if isAdmin();
+      allow create: if false;
+    }
+
+    match /foundingArtistCodes/{codeId} {
+      allow read, create, update, delete: if isAdmin();
+    }
+
     match /artists/{userId} {
-      allow read: if isSignedIn();
-      allow write: if isAdmin() || (isOwner(userId) && isApprovedArtist(userId));
+      allow read: if isAdmin()
+        || isOwner(userId)
+        || (
+          isSignedIn()
+          && resource.data.verificationStatus == 'approved'
+          && resource.data.isVisible == true
+        );
+      allow create: if isAdmin() || (
+        isOwner(userId)
+        && isApprovedArtist(userId)
+        && request.resource.data.get('verificationStatus', '') == 'approved'
+        && request.resource.data.get('postingEnabled', false) == userData(userId).get('postingEnabled', false)
+        && request.resource.data.get('certificateReviewStatus', 'pending') != 'approved'
+      );
+      allow update: if isAdmin() || (
+        isOwner(userId)
+        && isApprovedArtist(userId)
+        && ownerArtistAccessFieldsUnchanged()
+        && request.resource.data.get('certificateReviewStatus', resource.data.get('certificateReviewStatus', 'pending')) == resource.data.get('certificateReviewStatus', 'pending')
+      );
       allow delete: if isAdmin();
+
+      match /savedPosts/{postId} {
+        allow read, create, update, delete: if isOwner(userId) || isAdmin();
+      }
+
+      match /blockedUsers/{blockedUserId} {
+        allow read, create, update, delete: if isOwner(userId) || isAdmin();
+      }
     }
 
     match /dealers/{userId} {
@@ -175,56 +602,68 @@ service cloud.firestore {
       allow create: if isAdmin() || (
         isSignedIn()
         && request.resource.data.artistUid == request.auth.uid
-        && isApprovedArtist(request.auth.uid)
-        && isArtistSubscriptionActive(request.auth.uid)
+        && isArtistPostingEnabled(request.auth.uid)
       );
 
       allow update: if isAdmin() || (
         isSignedIn()
         && request.resource.data.artistUid == request.auth.uid
-        && isApprovedArtist(request.auth.uid)
-        && isArtistSubscriptionActive(request.auth.uid)
+        && isArtistPostingEnabled(request.auth.uid)
       ) || isPostLikeCountOnlyUpdate();
 
       allow delete: if false;
 
       match /likes/{likeUid} {
         allow read: if isSignedIn();
-        allow create, delete: if isOwner(likeUid);
+        allow create: if isOwner(likeUid) && request.resource.data.uid == request.auth.uid;
+        allow delete: if isOwner(likeUid);
         allow update: if false;
       }
 
       match /shares/{shareUid} {
         allow read: if isSignedIn();
-        allow create, delete: if isOwner(shareUid);
-        allow update: if false;
+        allow create, update, delete: if isOwner(shareUid);
       }
     }
 
     match /follows/{followId} {
       allow read: if isSignedIn();
-      allow create: if isSignedIn() && request.resource.data.fromUid == request.auth.uid;
+      allow create, update: if isSignedIn()
+        && followId == request.auth.uid + '_' + request.resource.data.toUid
+        && request.resource.data.fromUid == request.auth.uid
+        && request.resource.data.toUid is string
+        && request.resource.data.toUid != request.auth.uid;
       allow delete: if isSignedIn() && resource.data.fromUid == request.auth.uid;
-      allow update: if false;
     }
 
     match /bookings/{bookingId} {
       allow create: if isSignedIn()
         && request.resource.data.userUid == request.auth.uid
-        && request.resource.data.status == 'pending_artist_approval';
+        && request.resource.data.status in ['pending_artist_quote', 'pending_artist_approval'];
 
       allow read: if isAdmin() || (
         isSignedIn()
         && (resource.data.userUid == request.auth.uid || resource.data.artistUid == request.auth.uid)
       );
 
-      allow update: if isAdmin() || (
-        isSignedIn()
-        && resource.data.userUid == request.auth.uid
-      ) || (
-        isSignedIn()
-        && resource.data.artistUid == request.auth.uid
-      );
+      allow update: if isAdmin()
+        || isUserBookingCancel()
+        || isBookingReminderUpdateByParticipant()
+        || isUserPaymentTimeoutUpdate()
+        || isQuoteExpiryCleanupByParticipant()
+        || isArtistNoResponseExpiryCleanup()
+        || isArtistQuoteUpdate()
+        || isArtistRejectUpdate()
+        || isUserRescheduleRequest()
+        || isArtistAcceptReschedule()
+        || isArtistRejectReschedule()
+        || isUserCompletionRequest()
+        || isArtistFinalAmountUpdate()
+        || isUserMarkedFinalPaidUpdate()
+        || isArtistFinalPaymentConfirmUpdate()
+        || isArtistFinalPaymentDisputeUpdate()
+        || isLegacyArtistApprovalUpdate()
+        || isLegacyPendingPaymentMigrationByUser();
 
       allow delete: if false;
     }
@@ -233,6 +672,30 @@ service cloud.firestore {
       allow read: if isSignedIn() || isAdmin();
       allow create, update: if isAdmin() || isSignedIn();
       allow delete: if isAdmin();
+    }
+
+    match /artistTransactions/{transactionId} {
+      allow read: if isAdmin() || (isSignedIn() && resource.data.artistUid == request.auth.uid);
+      allow create: if isAdmin() || (
+        isSignedIn()
+        && request.resource.data.artistUid == request.auth.uid
+        && request.resource.data.bookingId is string
+        && request.resource.data.userUid is string
+        && request.resource.data.bookingConfirmationFee is number
+        && request.resource.data.payoutStatus in ['pending', 'manual_tracked']
+        && request.resource.data.payoutMethod in ['razorpay', 'razorpay_link', 'manual', 'upi']
+      );
+      allow update: if isAdmin() || (
+        isSignedIn()
+        && resource.data.artistUid == request.auth.uid
+        && request.resource.data.artistUid == resource.data.artistUid
+        && request.resource.data.bookingId == resource.data.bookingId
+        && request.resource.data.userUid == resource.data.userUid
+        && request.resource.data.bookingConfirmationFee is number
+        && request.resource.data.payoutStatus in ['pending', 'manual_tracked']
+        && request.resource.data.payoutMethod in ['razorpay', 'razorpay_link', 'manual', 'upi']
+      );
+      allow delete: if false;
     }
 
     match /notifications/{notificationId} {
@@ -250,6 +713,38 @@ service cloud.firestore {
       allow delete: if isAdmin() || (isSignedIn() && resource.data.toUid == request.auth.uid);
     }
 
+    match /postReports/{reportId} {
+      allow read: if isAdmin() || (isSignedIn() && resource.data.reportedByUid == request.auth.uid);
+      allow create: if isSignedIn()
+        && reportId == request.resource.data.postId + '_' + request.auth.uid
+        && request.resource.data.reportedByUid == request.auth.uid
+        && request.resource.data.reason is string
+        && request.resource.data.reason.size() > 0
+        && request.resource.data.reason.size() <= 300
+        && request.resource.data.status == 'open';
+      allow update: if isAdmin() || (
+        isSignedIn()
+        && resource.data.reportedByUid == request.auth.uid
+        && request.resource.data.reportedByUid == resource.data.reportedByUid
+        && request.resource.data.postId == resource.data.postId
+        && request.resource.data.reason is string
+        && request.resource.data.reason.size() > 0
+        && request.resource.data.reason.size() <= 300
+        && request.resource.data.status == 'open'
+      );
+      allow delete: if false;
+    }
+    match /reports/{reportId} {
+      allow read: if isAdmin() || (isSignedIn() && resource.data.reportedByUid == request.auth.uid);
+      allow create: if isSignedIn()
+        && request.resource.data.reportedByUid == request.auth.uid;
+      allow update: if isAdmin() || (
+        isSignedIn()
+        && resource.data.reportedByUid == request.auth.uid
+        && request.resource.data.reportedByUid == resource.data.reportedByUid
+      );
+      allow delete: if false;
+    }
     match /{document=**} {
       allow read, write: if false;
     }

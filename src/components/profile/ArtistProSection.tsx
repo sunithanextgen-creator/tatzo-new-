@@ -1,6 +1,4 @@
-import React, { useCallback, useMemo } from 'react';
-import { Pressable } from 'react-native';
-import { ARTIST_SUBSCRIPTION_AMOUNT_RUPEES, ARTIST_SUBSCRIPTION_OFFER_LABEL, openRazorpayCheckoutForSubscription } from '../../services/subscription';
+import React, { useMemo } from 'react';
 
 import { StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
@@ -25,9 +23,6 @@ const statusCopy = (status: UserProfile['verificationStatus']): { label: string;
 const ArtistProSection = ({ uid, role, profile }: ArtistProSectionProps) => {
   const { theme } = useAppTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
-  const openSubscription = useCallback(() => {
-    openRazorpayCheckoutForSubscription().catch(console.error);
-  }, []);
 
   if (!uid) return null;
   if (role !== 'artist' && role !== 'dealer') return null;
@@ -61,18 +56,14 @@ const ArtistProSection = ({ uid, role, profile }: ArtistProSectionProps) => {
         <View style={styles.cardTop}>
           <View style={styles.cardTitleRow}>
             <Ionicons name="sparkles-outline" size={18} color={theme.colors.accent} />
-            <Text style={styles.cardTitle}>Subscription</Text>
+            <Text style={styles.cardTitle}>Launch Access</Text>
           </View>
           <Text style={styles.miniValue}>{subscriptionStatus}</Text>
         </View>
 
         <Text style={styles.cardSub} numberOfLines={3}>
-          {ARTIST_SUBSCRIPTION_OFFER_LABEL}. Tap to subscribe.
+          Approved artists keep full access during launch. No subscription paywall is required.
         </Text>
-        <Pressable onPress={openSubscription} style={styles.subscribeBtn}>
-          <Text style={styles.subscribeBtnText}>Subscribe Now (Rs.{ARTIST_SUBSCRIPTION_AMOUNT_RUPEES})</Text>
-        </Pressable>
-
       </View>
 
       <View style={styles.card}>
@@ -97,19 +88,6 @@ const createStyles = (theme: AppTheme) =>
     section: {
       gap: 10,
     },
-    subscribeBtn: {
-      alignItems: 'center',
-      paddingVertical: 12,
-      paddingHorizontal: 24,
-      backgroundColor: theme.colors.accent,
-      borderRadius: 20,
-    },
-    subscribeBtnText: {
-      color: theme.colors.textInverse,
-      fontSize: 14,
-      fontWeight: '800',
-    },
-
     sectionTitle: {
       color: theme.colors.textMuted,
       fontSize: 11,

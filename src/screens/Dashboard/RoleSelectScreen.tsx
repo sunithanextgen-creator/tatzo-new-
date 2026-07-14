@@ -3,37 +3,56 @@ import {
   ActivityIndicator,
   Alert,
   Animated,
+  Image,
   Platform,
-  ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
+  useWindowDimensions,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
+import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { auth } from '../../config/firebaseConfig';
 import { RootStackParamList, UserRole } from '../../types/app';
-import { syncUserProfile } from '../../services/userProfile';
-import { resolveDashboardRoute } from '../../navigation/routeResolver';
 import { createResponsiveShadow } from '../../utils/responsiveShadow';
 import { useAppTheme } from '../../theme/useAppTheme';
 import type { AppTheme } from '../../theme/theme';
 
+const TATZO_ROLE_LOGO = require('../../../assets/tatzo-role-logo.png');
+
+
 const roles: Array<{
   id: UserRole;
   title: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  accent: 'purple' | 'cyan';
+  bullets: string[];
 }> = [
-  { id: 'user', title: 'User' },
-  { id: 'artist', title: 'Artist' },
-  { id: 'dealer', title: 'Dealer' },
+  {
+    id: 'user',
+    title: 'User',
+    icon: 'person-outline',
+    accent: 'purple',
+    bullets: ['Discover artists', 'Explore tattoo designs', 'Book your tattoo'],
+  },
+  {
+    id: 'artist',
+    title: 'Artist',
+    icon: 'color-wand-outline',
+    accent: 'cyan',
+    bullets: ['Showcase your work', 'Receive booking requests', 'Grow your audience'],
+  },
 ];
 
 const RoleSelectScreen = () => {
   const { theme } = useAppTheme();
-  const styles = useMemo(() => createStyles(theme), [theme]);
+  const insets = useSafeAreaInsets();
+  const { width } = useWindowDimensions();
+  const isWide = width >= 700;
+  const styles = useMemo(() => createStyles(theme, isWide, insets.bottom), [theme, isWide, insets.bottom]);
 
   const [selectedRole, setSelectedRole] = useState<UserRole | null>(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -48,23 +67,14 @@ const RoleSelectScreen = () => {
     }).start();
   }, [fadeAnim]);
 
-  const saveAndContinue = async () => {
-    if (!selectedRole || !auth.currentUser) {
-      Alert.alert('Tatzo', 'Select your role to continue.');
-      return;
-    }
-
+  const continueWithRole = async (role: UserRole) => {
+    setSelectedRole(role);
     setIsSaving(true);
 
     try {
-      await syncUserProfile(auth.currentUser, {
-        role: selectedRole,
-        setupComplete: true,
-      });
-
       navigation.reset({
         index: 0,
-        routes: [{ name: resolveDashboardRoute(selectedRole) }],
+        routes: [{ name: 'Login', params: { role } }],
       });
     } catch (error: any) {
       console.error('TATZO: role setup failed', error);
@@ -74,159 +84,270 @@ const RoleSelectScreen = () => {
     }
   };
 
+  const handleLogin = () => {
+    if (!selectedRole) {
+      Alert.alert('Tatzo', 'Select User or Artist first, then login.');
+      return;
+    }
+    continueWithRole(selectedRole);
+  };
+
   return (
     <SafeAreaView style={styles.safeArea}>
-      <LinearGradient colors={theme.gradients.canvas} style={styles.container}>
+      <View style={styles.container}>
+        <View style={styles.subtlePurpleGlow} pointerEvents="none" />
+        <View style={styles.subtleCyanGlow} pointerEvents="none" />
+
         <Animated.View style={[styles.content, { opacity: fadeAnim }]}>
-          <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-            <View style={styles.headerBlock}>
-              <Text style={styles.title}>Choose your role</Text>
-            </View>
+          <View style={styles.logoBlock}>
+            <Image source={TATZO_ROLE_LOGO} style={styles.logo} resizeMode="contain" />
+          </View>
 
-            <View style={styles.cardsContainer}>
-              {roles.map((role) => {
-                const active = selectedRole === role.id;
+          <View style={styles.headerBlock}>
+            <Text style={styles.title}>Choose Your Role</Text>
+            <Text style={styles.subtitle}>Select how you want to continue with Tatzo.</Text>
+          </View>
 
-                return (
-                  <TouchableOpacity
-                    key={role.id}
-                    activeOpacity={0.92}
-                    onPress={() => setSelectedRole(role.id)}
-                    style={[styles.cardShell, active && styles.cardShellActive]}
-                  >
-                    <View style={styles.cardTopRow}>
-                      <Text style={styles.cardTitle}>{role.title}</Text>
-                      <View style={[styles.selectionDot, active && styles.selectionDotActive]} />
+          <View style={styles.cardsContainer}>
+            {roles.map((role) => {
+              const active = selectedRole === role.id;
+              const accentColor = role.accent === 'purple' ? '#A855F7' : '#00C8FF';
+              const gradientColors: [string, string] =
+                role.accent === 'purple'
+                  ? ['rgba(168,85,247,0.08)', 'rgba(255,255,255,0.025)']
+                  : ['rgba(0,200,255,0.07)', 'rgba(255,255,255,0.025)'];
+
+              return (
+                <TouchableOpacity
+                  key={role.id}
+                  activeOpacity={0.92}
+                  onPress={() => setSelectedRole(role.id)}
+                  style={[styles.cardShell, active && { borderColor: accentColor }]}
+                >
+                  <LinearGradient colors={gradientColors} style={styles.cardGlow}>
+                    <View style={[styles.iconRing, { borderColor: accentColor }]}>
+                      <Ionicons name={role.icon} size={isWide ? 40 : 30} color={accentColor} />
                     </View>
-                    {active ? <Text style={styles.selectedLabel}>Selected</Text> : null}
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-          </ScrollView>
 
-          <TouchableOpacity
-            activeOpacity={0.9}
-            disabled={!selectedRole || isSaving}
-            onPress={saveAndContinue}
-            style={[styles.ctaWrap, (!selectedRole || isSaving) && styles.ctaWrapDisabled]}
-          >
-            <LinearGradient colors={theme.gradients.accent} style={styles.ctaButton}>
-              {isSaving ? <ActivityIndicator color={theme.colors.textInverse} /> : <Text style={styles.ctaText}>Continue</Text>}
-            </LinearGradient>
-          </TouchableOpacity>
+                    <Text style={styles.cardTitle}>{role.title}</Text>
+                    <View style={[styles.cardDivider, { backgroundColor: accentColor }]} />
+
+                    <View style={styles.bulletList}>
+                      {role.bullets.map((item) => (
+                        <View key={item} style={styles.bulletRow}>
+                          <Ionicons name="checkmark-circle-outline" size={isWide ? 17 : 14} color={accentColor} />
+                          <Text style={styles.bulletText}>{item}</Text>
+                        </View>
+                      ))}
+                    </View>
+
+                    <TouchableOpacity
+                      activeOpacity={0.9}
+                      disabled={isSaving}
+                      onPress={() => continueWithRole(role.id)}
+                      style={styles.roleButtonWrap}
+                    >
+                      <LinearGradient colors={role.accent === 'purple' ? ['#A855F7', '#7C3AED'] : ['#00C8FF', '#0066FF']} style={styles.roleButton}>
+                        {isSaving && selectedRole === role.id ? (
+                          <ActivityIndicator color="#FFFFFF" />
+                        ) : (
+                          <Text style={styles.roleButtonText}>Continue as {role.title}</Text>
+                        )}
+                      </LinearGradient>
+                    </TouchableOpacity>
+                  </LinearGradient>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+
+          <View style={styles.loginBlock}>
+            <Text style={styles.loginHint}>Already have an account?</Text>
+            <TouchableOpacity activeOpacity={0.88} onPress={handleLogin} style={styles.loginButton}>
+              <Text style={styles.loginText}>Login</Text>
+            </TouchableOpacity>
+          </View>
         </Animated.View>
-      </LinearGradient>
+      </View>
     </SafeAreaView>
   );
 };
 
-const createStyles = (theme: AppTheme) =>
+const createStyles = (theme: AppTheme, isWide: boolean, bottomInset: number) =>
   StyleSheet.create({
     safeArea: {
       flex: 1,
-      backgroundColor: theme.colors.background,
+      backgroundColor: '#000000',
     },
     container: {
       flex: 1,
+      backgroundColor: '#000000',
+      overflow: 'hidden',
+    },
+    subtlePurpleGlow: {
+      position: 'absolute',
+      left: -42,
+      top: 90,
+      width: 120,
+      height: 220,
+      borderRadius: 80,
+      backgroundColor: 'rgba(168,85,247,0.10)',
+      opacity: 0.7,
+    },
+    subtleCyanGlow: {
+      position: 'absolute',
+      right: -50,
+      bottom: 120,
+      width: 130,
+      height: 240,
+      borderRadius: 90,
+      backgroundColor: 'rgba(0,200,255,0.08)',
+      opacity: 0.7,
     },
     content: {
       flex: 1,
-      paddingHorizontal: 24,
-      paddingTop: 10,
-      paddingBottom: 24,
+      paddingHorizontal: isWide ? 54 : 18,
+      paddingTop: isWide ? 8 : 4,
+      paddingBottom: Math.max(12, bottomInset + 6),
+      justifyContent: 'center',
+      gap: isWide ? 18 : 10,
     },
-    scrollContent: {
-      gap: 16,
-      paddingBottom: 24,
+    logoBlock: {
+      alignItems: 'center',
+    },
+    logo: {
+      width: isWide ? 260 : 138,
+      height: isWide ? 260 : 138,
     },
     headerBlock: {
-      gap: 10,
-      paddingTop: 12,
+      alignItems: 'center',
+      gap: 6,
     },
     title: {
-      color: theme.mode === 'light' ? theme.colors.text : theme.colors.textInverse,
-      fontSize: 30,
-      lineHeight: 36,
-      fontFamily: theme.fonts.display,
+      color: theme.mode === 'light' ? '#7C3AED' : '#00D4FF',
+      fontSize: isWide ? 38 : 25,
+      lineHeight: isWide ? 44 : 30,
+      fontWeight: '900',
+      textAlign: 'center',
+      letterSpacing: -0.8,
+    },
+    subtitle: {
+      color: theme.mode === 'light' ? '#4B5563' : 'rgba(255,255,255,0.78)',
+      fontSize: isWide ? 16 : 12,
+      lineHeight: 16,
+      textAlign: 'center',
+      fontWeight: '700',
     },
     cardsContainer: {
-      gap: 12,
-      paddingTop: 4,
+      flexDirection: 'row',
+      gap: isWide ? 16 : 10,
+      width: '100%',
+      alignSelf: 'center',
+      maxWidth: 820,
     },
     cardShell: {
-      backgroundColor: theme.mode === 'light' ? theme.colors.surface : 'rgba(255, 255, 255, 0.05)',
-      borderRadius: 24,
-      padding: 18,
+      flex: 1,
+      minHeight: isWide ? 330 : 226,
+      borderRadius: isWide ? 28 : 22,
       borderWidth: 1,
-      borderColor: theme.colors.border,
-      gap: 10,
+      borderColor: 'rgba(255,255,255,0.12)',
+      overflow: 'hidden',
+      backgroundColor: 'rgba(255,255,255,0.035)',
       ...createResponsiveShadow({
-        web: theme.mode === 'light' ? '0px 12px 24px rgba(5, 10, 20, 0.08)' : '0px 12px 24px rgba(5, 10, 20, 0.12)',
+        web: '0px 14px 24px rgba(0, 0, 0, 0.26)',
         native: {
-          shadowColor: theme.mode === 'light' ? 'rgba(5, 10, 20, 0.12)' : theme.colors.shadow,
-          shadowOffset: { width: 0, height: 12 },
-          shadowOpacity: theme.mode === 'light' ? 0.08 : 0.12,
-          shadowRadius: 24,
-          elevation: 5,
+          shadowColor: '#000000',
+          shadowOffset: { width: 0, height: 10 },
+          shadowOpacity: 0.22,
+          shadowRadius: 18,
+          elevation: 4,
         },
       }),
     },
-    cardShellActive: {
-      borderColor: theme.colors.accent,
-      backgroundColor: theme.colors.accentSoft,
-    },
-    cardTopRow: {
-      flexDirection: 'row',
-      justifyContent: 'space-between',
-      gap: 12,
+    cardGlow: {
+      flex: 1,
       alignItems: 'center',
+      paddingHorizontal: isWide ? 20 : 9,
+      paddingVertical: isWide ? 24 : 12,
+      gap: isWide ? 13 : 8,
+    },
+    iconRing: {
+      width: isWide ? 104 : 56,
+      height: isWide ? 104 : 56,
+      borderRadius: isWide ? 52 : 28,
+      borderWidth: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: 'rgba(0,0,0,0.22)',
     },
     cardTitle: {
-      color: theme.mode === 'light' ? theme.colors.text : theme.colors.textInverse,
-      fontSize: 22,
-      fontFamily: theme.fonts.display,
+      color: '#FFFFFF',
+      fontSize: isWide ? 28 : 19,
+      fontWeight: '900',
+      textAlign: 'center',
     },
-    selectionDot: {
-      width: 20,
-      height: 20,
-      borderRadius: 10,
-      borderWidth: 1.5,
-      borderColor: theme.mode === 'light' ? 'rgba(11, 11, 15, 0.2)' : 'rgba(199, 204, 214, 0.32)',
-      marginTop: 4,
-    },
-    selectionDotActive: {
-      backgroundColor: theme.colors.accent,
-      borderColor: theme.colors.accent,
-    },
-    selectedLabel: {
-      color: theme.mode === 'light' ? theme.colors.text : theme.colors.textInverse,
-      fontSize: 12,
-      fontWeight: '700',
-      textTransform: 'uppercase',
-      letterSpacing: 1.4,
-      alignSelf: 'flex-start',
-      paddingHorizontal: 10,
-      paddingVertical: 6,
+    cardDivider: {
+      width: isWide ? 96 : 58,
+      height: 2,
       borderRadius: 999,
-      backgroundColor: theme.colors.accentSoft,
+      opacity: 0.72,
     },
-    ctaWrap: {
-      marginTop: 'auto',
-      paddingTop: 12,
+    bulletList: {
+      width: '100%',
+      gap: isWide ? 10 : 5,
+      marginTop: 2,
     },
-    ctaWrapDisabled: {
-      opacity: 0.55,
-    },
-    ctaButton: {
-      borderRadius: 18,
-      paddingVertical: 16,
+    bulletRow: {
+      flexDirection: 'row',
       alignItems: 'center',
+      gap: isWide ? 10 : 5,
     },
-    ctaText: {
-      color: theme.mode === 'light' ? '#0B0B0F' : theme.colors.textInverse,
-      fontSize: 16,
+    bulletText: {
+      flex: 1,
+      color: 'rgba(255,255,255,0.78)',
+      fontSize: isWide ? 14 : 9.8,
+      fontWeight: '800',
+      lineHeight: isWide ? 20 : 13,
+    },
+    roleButtonWrap: {
+      width: '100%',
+      marginTop: 'auto',
+      minHeight: isWide ? 50 : 38,
+    },
+    roleButton: {
+      minHeight: isWide ? 50 : 38,
+      borderRadius: isWide ? 17 : 13,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: 14,
+    },
+    roleButtonText: {
+      color: '#FFFFFF',
+      fontSize: isWide ? 16 : 10.8,
+      fontWeight: '900',
+    },
+    loginBlock: {
+      alignItems: 'center',
+      gap: 4,
+      marginTop: 0,
+    },
+    loginHint: {
+      color: 'rgba(255,255,255,0.66)',
+      fontSize: isWide ? 15 : 12,
       fontWeight: '700',
+    },
+    loginButton: {
+      minHeight: isWide ? 44 : 36,
+      minWidth: 88,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderBottomWidth: 1,
+      borderBottomColor: '#A855F7',
+    },
+    loginText: {
+      color: '#A855F7',
+      fontSize: isWide ? 22 : 18,
+      fontWeight: '900',
     },
   });
 

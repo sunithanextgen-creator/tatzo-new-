@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { FlatList, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { FlatList, Modal, Pressable, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { collection, limit, onSnapshot, orderBy, query } from 'firebase/firestore';
 import { db } from '../../config/firebaseConfig';
@@ -23,11 +23,22 @@ const labelFor = (n: NotificationRow) => {
   const who = n.fromName ?? 'Someone';
   if (n.type === 'booking_requested') return `${who} requested a booking`;
   if (n.type === 'booking_artist_approved_payment_pending') return 'Artist approved your booking';
+  if (n.type === 'booking_quote_sent') return 'Artist quote is ready';
   if (n.type === 'booking_rejected') return `${who} rejected a booking`;
   if (n.type === 'booking_reminder') return 'Booking reminder';
-  if (n.type === 'payment_success') return 'Payment received';
+  if (n.type === 'payment_success') return 'Collected Amount Recorded';
+  if (n.type === 'final_payment_requested') return 'Collected amount shared';
+  if (n.type === 'final_payment_user_marked_paid') return 'User marked collected amount paid';
+  if (n.type === 'final_payment_disputed') return 'Final payment issue';
+  if (n.type === 'final_payment_success') return 'Revenue tracking updated';
   if (n.type === 'booking_confirmed') return 'Booking confirmed';
   if (n.type === 'booking_cancelled') return 'Booking cancelled';
+  if (n.type === 'booking_reschedule_requested') return 'Reschedule requested';
+  if (n.type === 'booking_reschedule_accepted') return 'Reschedule accepted';
+  if (n.type === 'booking_reschedule_rejected') return 'Reschedule rejected';
+  if (n.type === 'revenue_tracking') return 'Revenue tracking update';
+  if (n.type === 'subscription_update') return 'Subscription update';
+  if (n.type === 'system_message') return 'System message';
   if (n.type === 'dealer_request_submitted') return 'Dealer request submitted';
   if (n.type === 'dealer_request_approved') return 'Dealer request approved';
   if (n.type === 'dealer_request_rejected') return 'Dealer request rejected';
@@ -39,6 +50,7 @@ const labelFor = (n: NotificationRow) => {
   if (n.type === 'reschedule_proposed') return `${who} proposed a new date`;
   if (n.type === 'session_completed') return `${who} marked your session completed`;
   if (n.type === 'verification_approved') return 'Your verification was approved';
+  if (n.type === 'verification_needs_more_samples') return 'More samples needed';
   if (n.type === 'verification_rejected') return 'Your verification was rejected';
   if (n.type === 'follow') return `${who} followed you`;
   if (n.type === 'share') return `${who} shared your post`;
@@ -47,15 +59,21 @@ const labelFor = (n: NotificationRow) => {
 
 const iconFor = (type: NotificationType): keyof typeof Ionicons.glyphMap => {
   if (type === 'booking_requested' || type === 'booking_request') return 'calendar-outline';
+  if (type === 'booking_quote_sent') return 'pricetag-outline';
+  if (type === 'booking_quote_expired') return 'timer-outline';
   if (type === 'booking_artist_approved_payment_pending') return 'card-outline';
   if (type === 'booking_reminder') return 'alarm-outline';
-  if (type === 'payment_success') return 'checkmark-done-circle-outline';
+  if (type === 'payment_success' || type === 'final_payment_success' || type === 'subscription_update') return 'checkmark-done-circle-outline';
+  if (type === 'final_payment_disputed') return 'warning-outline';
+  if (type === 'final_payment_requested' || type === 'final_payment_user_marked_paid' || type === 'revenue_tracking') return 'cash-outline';
   if (type === 'booking_confirmed') return 'checkmark-circle-outline';
   if (type === 'booking_rejected' || type === 'booking_declined') return 'close-circle-outline';
   if (type === 'booking_cancelled') return 'remove-circle-outline';
-  if (type === 'reschedule_proposed') return 'swap-horizontal-outline';
+  if (type === 'reschedule_proposed' || type === 'booking_reschedule_requested' || type === 'booking_reschedule_accepted' || type === 'booking_reschedule_rejected') return 'swap-horizontal-outline';
   if (type === 'session_completed') return 'ribbon-outline';
+  if (type === 'system_message') return 'notifications-outline';
   if (type === 'verification_approved' || type === 'dealer_request_approved') return 'shield-checkmark-outline';
+  if (type === 'verification_needs_more_samples') return 'images-outline';
   if (type === 'verification_rejected' || type === 'dealer_request_rejected') return 'shield-outline';
   if (type === 'dealer_request_submitted') return 'hourglass-outline';
   if (type === 'follow') return 'person-add-outline';
@@ -65,10 +83,44 @@ const iconFor = (type: NotificationType): keyof typeof Ionicons.glyphMap => {
   return 'heart-outline';
 };
 
+const isPastDateISO = (dateISO?: unknown) => {
+  const value = String(dateISO ?? '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const [y, m, d] = value.split('-').map(Number);
+  const dateMs = new Date(y, m - 1, d).getTime();
+  const now = new Date();
+  const todayMs = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  return dateMs > 0 && dateMs < todayMs;
+};
+
+const isStalePayNotification = (item: NotificationRow) =>
+  (item.type === 'booking_artist_approved_payment_pending' || item.type === 'booking_quote_sent') && isPastDateISO(item.dateISO);
+
+const isBookingBadgeNotification = (type: NotificationType) =>
+  [
+    'booking_quote_sent',
+    'booking_quote_expired',
+    'booking_rejected',
+    'booking_artist_approved_payment_pending',
+    'booking_reminder',
+    'final_payment_requested',
+    'final_payment_user_marked_paid',
+    'final_payment_disputed',
+    'final_payment_success',
+    'payment_success',
+    'booking_confirmed',
+    'booking_cancelled',
+    'booking_reschedule_requested',
+    'booking_reschedule_accepted',
+    'booking_reschedule_rejected',
+  ].includes(type);
+
 const NotificationsModal = ({ visible, uid, onClose, onPressItem }: NotificationsModalProps) => {
   const { theme } = useAppTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
   const [items, setItems] = useState<NotificationRow[]>([]);
+  const readSyncingRef = useRef(false);
+  const visibleItems = useMemo(() => items.filter((item) => !isStalePayNotification(item)), [items]);
 
   useEffect(() => {
     if (!visible || !uid) return;
@@ -114,30 +166,58 @@ const NotificationsModal = ({ visible, uid, onClose, onPressItem }: Notification
   }, [uid, visible]);
 
   useEffect(() => {
-    if (!visible || !uid || !items.length) return;
+    if (!visible || !uid || !items.length || readSyncingRef.current) return;
 
-    const unreadIds = items.filter((item) => !item.read).map((item) => item.id);
+    const unreadIds = visibleItems.filter((item) => !item.read && !isBookingBadgeNotification(item.type)).map((item) => item.id);
     if (!unreadIds.length) return;
-
-    let cancelled = false;
+    readSyncingRef.current = true;
 
     (async () => {
-      for (const notificationId of unreadIds) {
-        if (cancelled) break;
-        try {
-          await markNotificationReadDual(uid, notificationId, true);
-        } catch {
-          // ignore read-sync failure
+      try {
+        for (const notificationId of unreadIds) {
+          try {
+            await markNotificationReadDual(uid, notificationId, true);
+          } catch {
+            // ignore read-sync failure
+          }
         }
+      } finally {
+        readSyncingRef.current = false;
       }
     })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [items, uid, visible]);
+  }, [visibleItems, uid, visible]);
 
   const renderSubline = (item: NotificationRow) => {
+    if (item.type === 'final_payment_requested') {
+      const meta = (item.metadata ?? {}) as any;
+      const amount = Number(meta.finalStudioAmount ?? item.depositAmount ?? 0);
+      return (
+        <View style={styles.quoteBox}>
+          <Text style={styles.quoteLine}>Collected amount</Text>
+          <Text style={styles.quoteStrong}>{amount > 0 ? `Rs. ${amount}` : 'Amount shared by artist'}</Text>
+          {meta.finalAmountNote ? <Text style={styles.quoteNote}>Artist note: {String(meta.finalAmountNote)}</Text> : null}
+          <Text style={styles.quoteNote}>Pay the artist directly using their UPI/payment link, then mark paid in Tatzo.</Text>
+          <Text style={styles.quoteCta}>Tap to open Payment Details</Text>
+        </View>
+      );
+    }
+
+    if (item.type === 'booking_quote_sent') {
+      const meta = (item.metadata ?? {}) as any;
+      const range = String(meta.quoteRangeLabel ?? '').trim();
+      const reason = String(item.reason ?? meta.quoteReason ?? '').trim();
+      return (
+        <View style={styles.quoteBox}>
+          <Text style={styles.quoteLine}>Estimated tattoo range</Text>
+          <Text style={styles.quoteStrong}>{range || 'Artist estimate ready'}</Text>
+          {reason ? <Text style={styles.quoteNote}>Artist note: {reason}</Text> : null}
+          <Text style={styles.quoteNote}>Pay only Rs. {item.depositAmount ?? 249} to reserve your appointment slot.</Text>
+          {item.dateISO ? <Text style={styles.quoteNote}>Date: {item.dateISO}</Text> : null}
+          <Text style={styles.quoteCta}>Tap to open Payment Details</Text>
+        </View>
+      );
+    }
+
     if (item.message?.trim()) {
       return (
         <Text style={styles.rowSub} numberOfLines={2}>
@@ -146,7 +226,7 @@ const NotificationsModal = ({ visible, uid, onClose, onPressItem }: Notification
       );
     }
 
-    if (item.type === 'reschedule_proposed' && item.proposedDateISO) {
+    if ((item.type === 'reschedule_proposed' || item.type === 'booking_reschedule_requested' || item.type === 'booking_reschedule_accepted' || item.type === 'booking_reschedule_rejected') && item.proposedDateISO) {
       return (
         <Text style={styles.rowSub} numberOfLines={1}>
           Proposed: {item.proposedDateISO}
@@ -158,6 +238,7 @@ const NotificationsModal = ({ visible, uid, onClose, onPressItem }: Notification
       (item.type === 'booking_requested' ||
         item.type === 'booking_request' ||
         item.type === 'booking_artist_approved_payment_pending' ||
+        item.type === 'booking_quote_expired' ||
         item.type === 'booking_confirmed' ||
         item.type === 'booking_rejected' ||
         item.type === 'booking_declined' ||
@@ -179,7 +260,7 @@ const NotificationsModal = ({ visible, uid, onClose, onPressItem }: Notification
       );
     }
 
-    if ((item.type === 'verification_rejected' || item.type === 'dealer_request_rejected') && item.reason) {
+    if ((item.type === 'verification_rejected' || item.type === 'verification_needs_more_samples' || item.type === 'dealer_request_rejected') && item.reason) {
       return (
         <Text style={styles.rowSub} numberOfLines={2}>
           Reason: {item.reason}
@@ -202,10 +283,18 @@ const NotificationsModal = ({ visible, uid, onClose, onPressItem }: Notification
         </View>
 
         <FlatList
-          data={items}
+          data={visibleItems}
           keyExtractor={(item) => item.id}
           contentContainerStyle={{ paddingHorizontal: 14, paddingBottom: 14, gap: 10 }}
-          ListEmptyComponent={<Text style={styles.empty}>No notifications yet.</Text>}
+          ListEmptyComponent={
+            <View style={styles.emptyWrap}>
+              <Text style={styles.emptyTitle}>You are all caught up</Text>
+              <Text style={styles.empty}>Booking updates, revenue prompts, subscription notices, and social activity will appear here.</Text>
+              <TouchableOpacity activeOpacity={0.9} onPress={onClose} style={styles.emptyBtn}>
+                <Text style={styles.emptyBtnText}>Back to app</Text>
+              </TouchableOpacity>
+            </View>
+          }
           renderItem={({ item }) => (
             <Pressable
               onPress={() => onPressItem?.(item)}
@@ -271,12 +360,76 @@ const createStyles = (theme: AppTheme) =>
       borderWidth: 1,
       borderColor: theme.colors.border,
     },
+    quoteBox: {
+      marginTop: 8,
+      padding: 10,
+      borderRadius: 14,
+      backgroundColor: theme.colors.accentSoft,
+      borderWidth: 1,
+      borderColor: theme.colors.accent,
+      gap: 4,
+    },
+    quoteLine: {
+      color: theme.colors.textMuted,
+      fontSize: 11,
+      fontWeight: '800',
+      textTransform: 'uppercase',
+      letterSpacing: 0.8,
+    },
+    quoteStrong: {
+      color: theme.mode === 'light' ? theme.colors.accentStrong : theme.colors.textInverse,
+      fontSize: 15,
+      fontWeight: '900',
+    },
+    quoteNote: {
+      color: theme.colors.text,
+      fontSize: 12,
+      fontWeight: '700',
+      lineHeight: 17,
+    },
+    quoteCta: {
+      marginTop: 4,
+      color: theme.colors.accentStrong,
+      fontSize: 12,
+      fontWeight: '900',
+      textTransform: 'uppercase',
+      letterSpacing: 0.7,
+    },
+    emptyWrap: {
+      paddingHorizontal: 18,
+      paddingTop: 20,
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 10,
+    },
+    emptyTitle: {
+      color: theme.mode === 'light' ? theme.colors.text : theme.colors.textInverse,
+      fontSize: 16,
+      fontWeight: '900',
+    },
     empty: {
       color: theme.colors.textMuted,
-      paddingHorizontal: 14,
-      paddingTop: 18,
       fontSize: 13,
       textAlign: 'center',
+      lineHeight: 19,
+    },
+    emptyBtn: {
+      minHeight: 42,
+      borderRadius: 14,
+      paddingHorizontal: 14,
+      paddingVertical: 10,
+      backgroundColor: theme.colors.accentSoft,
+      borderWidth: 1,
+      borderColor: theme.mode === 'light' ? 'rgba(122, 92, 255, 0.24)' : 'rgba(122, 92, 255, 0.28)',
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    emptyBtnText: {
+      color: theme.mode === 'light' ? theme.colors.text : theme.colors.textInverse,
+      fontSize: 12,
+      fontWeight: '900',
+      letterSpacing: 0.4,
+      textTransform: 'uppercase',
     },
     row: {
       flexDirection: 'row',

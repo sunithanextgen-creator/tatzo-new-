@@ -7,6 +7,10 @@ import type { AppTheme } from '../../theme/theme';
 type CalendarPickerModalProps = {
   visible: boolean;
   initialDateISO: string; // YYYY-MM-DD
+  allowedWeekdays?: number[];
+  minDateISO?: string;
+  maxDateISO?: string;
+  disabledDateISOs?: string[];
   onSelect: (dateISO: string) => void;
   onClose: () => void;
 };
@@ -21,10 +25,15 @@ const daysInMonth = (d: Date) => new Date(d.getFullYear(), d.getMonth() + 1, 0).
 
 const isSameDay = (a: Date, b: Date) =>
   a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+const isUnavailableDate = (date: Date, today: Date) => {
+  if (date < today) return true;
+  const now = new Date();
+  return isSameDay(date, today) && now.getHours() >= 21;
+};
 
 const WEEKDAYS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'] as const;
 
-const CalendarPickerModal = ({ visible, initialDateISO, onSelect, onClose }: CalendarPickerModalProps) => {
+const CalendarPickerModal = ({ visible, initialDateISO, allowedWeekdays, minDateISO, maxDateISO, disabledDateISOs, onSelect, onClose }: CalendarPickerModalProps) => {
   const { theme } = useAppTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
 
@@ -102,7 +111,12 @@ const CalendarPickerModal = ({ visible, initialDateISO, onSelect, onClose }: Cal
           {cells.map((cell) => {
             if (!cell.date) return <View key={cell.key} style={styles.dayCell} />;
 
-            const isPast = cell.date < today;
+            const weekdayBlocked = Array.isArray(allowedWeekdays) && allowedWeekdays.length > 0 && !allowedWeekdays.includes(cell.date.getDay());
+            const iso = toISODate(cell.date);
+            const beforeMin = Boolean(minDateISO && iso < minDateISO);
+            const afterMax = Boolean(maxDateISO && iso > maxDateISO);
+            const explicitlyDisabled = Array.isArray(disabledDateISOs) && disabledDateISOs.includes(iso);
+            const isPast = isUnavailableDate(cell.date, today) || weekdayBlocked || beforeMin || afterMax || explicitlyDisabled;
             const selected = isSameDay(cell.date, initial);
             return (
               <TouchableOpacity

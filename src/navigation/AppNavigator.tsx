@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Alert, Linking } from 'react-native';
 import { NavigationContainer, DefaultTheme } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
@@ -6,17 +6,20 @@ import { StatusBar } from 'expo-status-bar';
 import Login from '../screens/Auth/Login';
 import ArtistDashboardScreen from '../screens/Dashboard/ArtistDashboardScreen';
 import DealerDashboardScreen from '../screens/Dashboard/DealerDashboardScreen';
+import RoleSelectScreen from '../screens/Dashboard/RoleSelectScreen';
 import UserDashboardScreen from '../screens/Dashboard/UserDashboardScreen';
 import SplashScreen from '../screens/Shared/SplashScreen';
-import { markBookingPaidRazorpay } from '../services/bookings';
+import { markBookingPaidRazorpay, markFinalPaymentPaidRazorpay } from '../services/bookings';
 import {
   markSubscriptionPaidRazorpay,
   markSubscriptionPaymentCancelled,
   markSubscriptionPaymentFailed,
 } from '../services/subscription';
+import { emitPaymentReturn, type PaymentReturnPayload } from '../services/paymentReturn';
 import { RootStackParamList } from '../types/app';
 import { useSessionRouting } from './useSessionRouting';
 import { useAppTheme } from '../theme/useAppTheme';
+import { ANALYTICS_EVENTS, identifyAnalyticsUser, trackAnalyticsEventOnce } from '../services/analytics/analytics';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
@@ -24,6 +27,24 @@ const AppNavigator = () => {
   const session = useSessionRouting();
   const [bootReady, setBootReady] = useState(false);
   const { theme } = useAppTheme();
+
+  useEffect(() => {
+    if (session.status !== 'ready') return;
+    const role = session.profile.role === 'artist' ? 'artist' : 'user';
+    void identifyAnalyticsUser(session.user.uid, {
+      user_role: role,
+      verification_status: String(session.profile.verificationStatus ?? 'unsubmitted'),
+      founding_plan: String((session.profile as any).plan ?? (session.profile as any).foundingPlan ?? '') || null,
+      launch_city_cohort: String(session.profile.locationCity ?? '').trim().toLowerCase() === 'chennai' ? 'chennai' : 'other',
+    });
+    if (role === 'artist' && session.profile.verificationStatus === 'approved') {
+      void trackAnalyticsEventOnce(
+        `artist_verification_approved_${session.user.uid}`,
+        ANALYTICS_EVENTS.ARTIST_VERIFICATION_APPROVED,
+        { artist_id: session.user.uid },
+      );
+    }
+  }, [session]);
 
   const navigationTheme = useMemo(
     () => ({
@@ -39,11 +60,6 @@ const AppNavigator = () => {
     }),
     [theme],
   );
-
-  useEffect(() => {
-    const timer = setTimeout(() => setBootReady(true), 1600);
-    return () => clearTimeout(timer);
-  }, []);
 
   useEffect(() => {
     let mounted = true;
@@ -68,20 +84,21 @@ const AppNavigator = () => {
         };
 
         const status = getParam('status');
-        const flow = getParam('flow') || 'booking';
+        const flow = (getParam('flow') || 'booking') as NonNullable<PaymentReturnPayload['flow']>;
         const uid = getParam('uid');
-          if (flow === 'subscription') {
-            if (status === 'cancelled') {
-              await markSubscriptionPaymentCancelled({ uid, reason: 'Payment cancelled by user.' });
-              Alert.alert('Tatzo', 'Subscription payment cancelled. You can retry from Profile.');
-              return;
-            }
 
-            if (status && status !== 'success') {
-              await markSubscriptionPaymentFailed({ uid, reason: 'Payment failed. Please retry.' });
-              Alert.alert('Tatzo', 'Subscription payment failed. Retry from Profile.');
-              return;
-            }
+        if (flow === 'subscription') {
+          if (status === 'cancelled') {
+            await markSubscriptionPaymentCancelled({ uid, reason: 'Payment cancelled by user.' });
+            Alert.alert('Tatzo', 'Subscription payment cancelled. You can retry from Profile.');
+            return;
+          }
+
+          if (status && status !== 'success') {
+            await markSubscriptionPaymentFailed({ uid, reason: 'Payment failed. Please retry.' });
+            Alert.alert('Tatzo', 'Subscription payment failed. Retry from Profile.');
+            return;
+          }
         } else if (status && status !== 'success') {
           return;
         }
@@ -99,14 +116,32 @@ const AppNavigator = () => {
             paymentId,
             signature,
           });
-          Alert.alert('Tatzo', 'Payment received. Subscription is verifying. Refresh Profile in a moment.');
+          Alert.alert('Tatzo', 'Payment verified. Pro is active now.');
           return;
         }
 
         const bookingId = getParam('bookingId');
         if (!bookingId) return;
 
+        if (flow === 'final_payment') {
+          await markFinalPaymentPaidRazorpay({ bookingId, orderId, paymentId, signature });
+          emitPaymentReturn({ bookingId, flow, orderId, paymentId, signature, status: 'success' });
+          Alert.alert('Tatzo', 'Final payment verified. Booking completed.');
+          return;
+        }
+
         await markBookingPaidRazorpay({ bookingId, orderId, paymentId, signature });
+        await trackAnalyticsEventOnce(`booking_purchase_${bookingId}_${paymentId}`, ANALYTICS_EVENTS.PAYMENT_SUCCESS, {
+          booking_id: bookingId,
+          payment_id: paymentId,
+          value: 249,
+          currency: 'INR',
+        });
+        await trackAnalyticsEventOnce(`booking_confirmed_${bookingId}_${paymentId}`, ANALYTICS_EVENTS.BOOKING_CONFIRMED, {
+          booking_id: bookingId,
+          payment_id: paymentId,
+        });
+        emitPaymentReturn({ bookingId, flow, orderId, paymentId, signature, status: 'success' });
         Alert.alert('Tatzo', 'Payment verified. Booking confirmed.');
       } catch (e: any) {
         Alert.alert('Tatzo', e?.message ?? 'Payment verification failed.');
@@ -127,18 +162,18 @@ const AppNavigator = () => {
     };
   }, []);
 
-  // Chill onboarding: show only splash while booting or provisioning profile defaults.
-  if (!bootReady || session.status === 'loading' || session.status === 'needsProfile') {
+  // Show splash only while booting/auth is genuinely loading. Never hold needsProfile here.
+  if (!bootReady || session.status === 'loading') {
     return (
       <>
         <StatusBar style="light" />
-        <SplashScreen />
+        <SplashScreen onPlaybackEnd={() => setBootReady(true)} />
       </>
     );
   }
 
   const navigationKey = session.status === 'ready' ? session.route : 'auth';
-  const initialRouteName = session.status === 'ready' ? session.route : 'Login';
+  const initialRouteName = session.status === 'ready' ? session.route : 'RoleSelect';
 
   return (
     <NavigationContainer theme={navigationTheme}>
@@ -153,6 +188,7 @@ const AppNavigator = () => {
           contentStyle: { backgroundColor: theme.colors.background },
         }}
       >
+        <Stack.Screen name="RoleSelect" component={RoleSelectScreen} />
         <Stack.Screen name="Login" component={Login} />
         <Stack.Screen name="UserDashboard" component={UserDashboardScreen} />
         <Stack.Screen name="ArtistDashboard" component={ArtistDashboardScreen} />
@@ -163,3 +199,6 @@ const AppNavigator = () => {
 };
 
 export default AppNavigator;
+
+
+

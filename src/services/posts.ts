@@ -18,17 +18,23 @@ import {
 } from 'firebase/firestore';
 import { auth, db } from '../config/firebaseConfig';
 import { writeNotificationDual } from './notifications';
+import { getArtistSettingsFromProfile, getArtistPublicVisibility } from './artistSettings';
 
 export type ArtistPostRow = {
   id: string;
   artistUid: string;
   artistName: string;
   artistHandle?: string | null;
+  artistProfileImageUrl?: string | null;
   artistApproved: boolean;
   artistVisible: boolean;
+  bookingVisible?: boolean;
   caption: string;
   imageUrl: string;
   imageStoragePath?: string | null;
+  videoUrl?: string | null;
+  videoStoragePath?: string | null;
+  mediaType?: 'image' | 'video' | null;
   tags: string[];
   status: 'active';
   createdAt?: unknown;
@@ -43,6 +49,9 @@ type CreateArtistPostInput = {
   caption: string;
   imageUrl: string;
   imageStoragePath?: string;
+  videoUrl?: string;
+  videoStoragePath?: string;
+  mediaType?: 'image' | 'video' | null;
   tags?: string[];
 };
 
@@ -68,23 +77,50 @@ const resolveArtistVisibilityFlags = async (
     }
 
     const artistData = artistSnap.data() as any;
-    const artistApproved = String(artistData?.verificationStatus ?? '') === 'approved' || artistData?.verifiedPro === true;
-    const artistVisible = artistApproved && artistData?.isVisible !== false;
+    const artistApproved = String(artistData?.verificationStatus ?? '') === 'approved';
+    const settings = getArtistSettingsFromProfile(artistData);
+    const artistVisible = artistApproved && artistData?.isVisible !== false && getArtistPublicVisibility(settings);
+    const bookingVisible = settings.privacy.bookingVisibility !== false;
 
     return {
       artistApproved,
       artistVisible,
+      bookingVisible,
     };
   } catch {
-    return { artistApproved: false, artistVisible: false };
+    return { artistApproved: false, artistVisible: false, bookingVisible: false };
+  }
+};
+
+const resolveArtistPublishAccess = async (
+  artistUid: string,
+  userData?: { role?: string; verificationStatus?: string; postingEnabled?: boolean } | null,
+) => {
+  const userApproved =
+    String(userData?.role ?? '') === 'artist' &&
+    String(userData?.verificationStatus ?? '') === 'approved' &&
+    userData?.postingEnabled !== false;
+
+  try {
+    const artistSnap = await getDoc(doc(db, 'artists', artistUid));
+    const artistData = artistSnap.exists() ? (artistSnap.data() as any) : null;
+    const artistApproved =
+      String(artistData?.verificationStatus ?? '') === 'approved' &&
+      artistData?.postingEnabled !== false &&
+      artistData?.artistVisible !== false &&
+      artistData?.bookingVisible !== false;
+
+    return { canPublish: userApproved || artistApproved, artistData };
+  } catch {
+    return { canPublish: userApproved, artistData: null };
   }
 };
 
 export const createArtistPost = async (input: CreateArtistPostInput) => {
   const artistUid = input.artistUid.trim();
   if (!artistUid) throw new Error('Missing artist UID.');
-  if (!input.caption.trim() && !input.imageUrl.trim()) {
-    throw new Error('Add caption or image URL.');
+  if (!input.caption.trim() && !input.imageUrl.trim() && !String(input.videoUrl ?? '').trim()) {
+    throw new Error('Add caption, image, or video.');
   }
 
   const userSnap = await getDoc(doc(db, 'users', artistUid));
@@ -104,24 +140,24 @@ export const createArtistPost = async (input: CreateArtistPostInput) => {
         locationCity: safeLocationCity,
         locationArea: safeLocationArea,
         location: [safeLocationArea, safeLocationCity].filter(Boolean).join(', '),
+        artistSettings: userData?.artistSettings ?? undefined,
         verificationStatus: 'approved',
         verifiedPro: true,
-        isVisible: true,
+        isVisible: getArtistPublicVisibility(getArtistSettingsFromProfile(userData)),
         updatedAt: serverTimestamp(),
         createdAt: serverTimestamp(),
       },
       { merge: true },
     );
   }
-  const canPublish =
-    userData?.subscriptionStatus === 'active' &&
-    userData?.subscriptionPaymentStatus === 'paid' &&
-    userData?.subscriptionVerificationStatus === 'verified';
+  const publishAccess = await resolveArtistPublishAccess(artistUid, userData);
+  const canPublish = publishAccess.canPublish;
   if (!canPublish) {
-    throw new Error('Subscription is not active yet. Complete payment and wait for verification.');
+    throw new Error('Artist approval is required before publishing posts.');
   }
 
   const visibility = await resolveArtistVisibilityFlags(artistUid, userData);
+  const artistProfileImageUrl = String(userData?.profileImageUrl ?? publishAccess.artistData?.profileImageUrl ?? '').trim();
 
   const postRef = doc(collection(db, 'posts'));
   const payload: ArtistPostRow = {
@@ -129,11 +165,16 @@ export const createArtistPost = async (input: CreateArtistPostInput) => {
     artistUid,
     artistName: input.artistName.trim() || 'Artist',
     artistHandle: (input.artistHandle || '').trim() || null,
+    artistProfileImageUrl: artistProfileImageUrl || null,
     artistApproved: visibility.artistApproved,
     artistVisible: visibility.artistVisible,
+    bookingVisible: visibility.bookingVisible,
     caption: input.caption.trim(),
     imageUrl: (input.imageUrl || '').trim(),
     imageStoragePath: (input.imageStoragePath || '').trim() || null,
+    videoUrl: (input.videoUrl || '').trim() || null,
+    videoStoragePath: (input.videoStoragePath || '').trim() || null,
+    mediaType: input.mediaType ?? ((input.videoUrl || '').trim() ? 'video' : (input.imageUrl || '').trim() ? 'image' : null),
     tags: parseTags(input.tags || []),
     status: 'active',
   };
@@ -187,11 +228,13 @@ export const syncArtistPostVisibilityForUid = async (artistUid: string, maxRows 
     const d = row.data() as any;
     const currentApproved = d.artistApproved === true;
     const currentVisible = d.artistVisible === true;
-    if (currentApproved === target.artistApproved && currentVisible === target.artistVisible) return;
+    const currentBookingVisible = d.bookingVisible === true;
+    if (currentApproved === target.artistApproved && currentVisible === target.artistVisible && currentBookingVisible === target.bookingVisible) return;
 
     batch.update(row.ref, {
       artistApproved: target.artistApproved,
       artistVisible: target.artistVisible,
+      bookingVisible: target.bookingVisible,
       lastVisibilitySyncAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     });
@@ -277,4 +320,5 @@ export const getArtistPostCount = async (artistUid: string) => {
   const snap = await getCountFromServer(q);
   return snap.data().count;
 };
+
 

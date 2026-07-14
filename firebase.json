@@ -1,26 +1,66 @@
-{
-  "firestore": {
-    "rules": "firestore.rules",
-    "indexes": "firestore.indexes.json"
-  },
-  "functions": {
-    "source": "functions"
-  },
-  "storage": {
-    "rules": "storage.rules"
-  },
-  "hosting": {
-    "public": "admin-web/dist",
-    "ignore": [
-      "firebase.json",
-      "**/.*",
-      "**/node_modules/**"
-    ],
-    "rewrites": [
-      {
-        "source": "**",
-        "destination": "/index.html"
-      }
-    ]
-  }
+﻿{
+    "firestore":  {
+                      "rules":  "firestore.rules",
+                      "indexes":  "firestore.indexes.json"
+                  },
+    "functions":  {
+                      "source":  "functions"
+                  },
+    "storage":  {
+                    "rules":  "storage.rules"
+                },
+    "hosting":  {
+                    "public":  "admin-web/dist",
+                    "ignore":  [
+                                   "firebase.json",
+                                   "**/.*",
+                                   "**/node_modules/**"
+                               ],
+                    "rewrites":  [
+                                     {
+                                         "source":  "/delete-account",
+                                         "destination":  "/delete-account.html"
+                                     },
+                                     {
+                                         "source":  "/privacy-policy",
+                                         "destination":  "/privacy-policy.html"
+                                     },
+                                     {
+                                         "source":  "/early-access",
+                                         "destination":  "/early-access.html"
+                                     },
+                                     {
+                                         "source":  "/api/early-access",
+                                         "function":  {
+                                                          "functionId":  "earlyAccessSignup",
+                                                          "region":  "asia-south1"
+                                                      }
+                                     },
+                                     {
+                                         "source":  "/pay",
+                                         "function":  {
+                                                          "functionId":  "payments",
+                                                          "region":  "asia-south1"
+                                                      }
+                                     },
+                                     {
+                                         "source":  "/api/razorpay/**",
+                                         "function":  {
+                                                          "functionId":  "payments",
+                                                          "region":  "asia-south1"
+                                                      }
+                                     },
+                                     {
+                                         "source":  "/health",
+                                         "function":  {
+                                                          "functionId":  "payments",
+                                                          "region":  "asia-south1"
+                                                      }
+                                     },
+                                     {
+                                         "source":  "**",
+                                         "destination":  "/index.html"
+                                     }
+                                 ]
+                }
 }

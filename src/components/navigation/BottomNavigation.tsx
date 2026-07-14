@@ -1,54 +1,45 @@
 ﻿import React, { useMemo } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
-import { createResponsiveShadow } from '../../utils/responsiveShadow';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppTheme } from '../../theme/useAppTheme';
-import { brand } from '../../theme/brand';
 import type { AppTheme } from '../../theme/theme';
 
-export type FeedNavKey = 'home' | 'explore' | 'findArtist' | 'learning' | 'shop';
+export type FeedNavKey = 'home' | 'explore' | 'findArtist' | 'shop' | 'profile';
 
 type BottomNavigationProps = {
   activeKey: FeedNavKey;
   onChange: (key: FeedNavKey) => void;
 };
 
-const NAV_ITEMS: Array<{ key: FeedNavKey; label: string; icon: keyof typeof Ionicons.glyphMap; isPrimary?: boolean }> = [
+const NAV_ITEMS: Array<{ key: FeedNavKey; label: string; icon: keyof typeof Ionicons.glyphMap }> = [
   { key: 'home', label: 'Home', icon: 'home-outline' },
   { key: 'explore', label: 'Explore', icon: 'search-outline' },
-  { key: 'findArtist', label: 'Find Artist', icon: 'add', isPrimary: true },
-  { key: 'learning', label: 'Academy', icon: 'school-outline' },
-  { key: 'shop', label: 'Shop', icon: 'cart-outline' },
+  { key: 'findArtist', label: 'Find Artist', icon: 'person-add-outline' },
+  { key: 'shop', label: 'Shop', icon: 'bag-outline' },
+  { key: 'profile', label: 'Profile', icon: 'person-outline' },
 ];
 
 const BottomNavigation = ({ activeKey, onChange }: BottomNavigationProps) => {
   const { theme } = useAppTheme();
-  const styles = useMemo(() => createStyles(theme), [theme]);
+  const insets = useSafeAreaInsets();
+  const styles = useMemo(() => createStyles(theme, insets.bottom), [theme, insets.bottom]);
 
   return (
     <View style={styles.shell}>
       {NAV_ITEMS.map((item) => {
         const isActive = activeKey === item.key;
-        const isPrimary = Boolean(item.isPrimary);
-
         return (
           <TouchableOpacity
             key={item.key}
-            activeOpacity={0.85}
+            activeOpacity={1}
             onPress={() => onChange(item.key)}
             style={[styles.item, isActive && styles.itemActive]}
             accessibilityRole="button"
             accessibilityLabel={item.label}
           >
             <View style={styles.iconSlot}>
-              {isPrimary ? (
-                <LinearGradient colors={[brand.electricNeonBlue, brand.cyberPurple]} style={styles.primaryIconShell}>
-                  <Ionicons name={item.icon} size={22} color={brand.deepInkBlack} />
-                </LinearGradient>
-              ) : (
-                <Ionicons name={item.icon} size={20} color={isActive ? theme.colors.accent : theme.colors.textMuted} />
-              )}
+              <Ionicons name={item.icon} size={20} color={isActive ? theme.colors.accent : theme.colors.textMuted} />
             </View>
 
             <Text numberOfLines={1} style={[styles.label, isActive && styles.labelActive]}>
@@ -63,74 +54,65 @@ const BottomNavigation = ({ activeKey, onChange }: BottomNavigationProps) => {
   );
 };
 
-const createStyles = (theme: AppTheme) =>
+const createStyles = (theme: AppTheme, bottomInset: number) =>
   StyleSheet.create({
     shell: {
       flexDirection: 'row',
-      marginHorizontal: 10,
-      marginBottom: 10,
-      backgroundColor: theme.mode === 'light' ? 'rgba(255, 255, 255, 0.92)' : 'rgba(11, 11, 15, 0.92)',
-      borderRadius: 22,
-      borderWidth: 1,
-      borderColor: theme.colors.border,
-      paddingVertical: 8,
-      paddingHorizontal: 6,
-      ...createResponsiveShadow({
-        web: theme.mode === 'light' ? '0px 16px 28px rgba(5, 10, 20, 0.16)' : '0px 16px 28px rgba(5, 10, 20, 0.32)',
-        native: {
-          shadowColor: theme.colors.shadow,
-          shadowOffset: { width: 0, height: 16 },
-          shadowOpacity: theme.mode === 'light' ? 0.16 : 0.32,
-          shadowRadius: 28,
-          elevation: 10,
-        },
-      }),
+      marginHorizontal: 12,
+      marginBottom: Math.max(2, bottomInset > 0 ? Math.round(bottomInset * 0.18) : 2),
+      backgroundColor: theme.mode === 'light' ? 'rgba(255, 255, 255, 0.96)' : '#000000',
+      borderRadius: 16,
+      borderWidth: 0,
+      paddingVertical: 3,
+      paddingHorizontal: 4,
+      paddingBottom: Math.max(3, bottomInset > 0 ? Math.min(7, Math.round(bottomInset * 0.22)) : 3),
+      shadowOpacity: 0,
+      elevation: 0,
     },
     item: {
       flex: 1,
+      minHeight: 40,
       alignItems: 'center',
       justifyContent: 'center',
-      gap: 4,
-      paddingVertical: 6,
-      borderRadius: 16,
+      gap: 2,
+      paddingVertical: 2,
+      borderRadius: 12,
     },
     itemActive: {
-      backgroundColor: theme.colors.accentSoft,
+      backgroundColor: 'transparent',
     },
     iconSlot: {
-      width: 44,
-      height: 44,
+      width: 30,
+      height: 30,
       alignItems: 'center',
       justifyContent: 'center',
-    },
-    primaryIconShell: {
-      width: 44,
-      height: 44,
-      borderRadius: 22,
-      alignItems: 'center',
-      justifyContent: 'center',
-      borderWidth: 1,
-      borderColor: 'rgba(255, 255, 255, 0.12)',
     },
     label: {
       color: theme.colors.textMuted,
-      fontSize: 9,
-      fontWeight: '800',
+      fontSize: Math.max(9, theme.typography.caption - 1),
+      fontWeight: '700',
       letterSpacing: 0.2,
       textAlign: 'center',
     },
     labelActive: {
       color: theme.colors.accent,
+      textShadowColor: theme.mode === 'light' ? 'rgba(33, 108, 255, 0.12)' : 'rgba(138, 43, 255, 0.24)',
+      textShadowOffset: { width: 0, height: 0 },
+      textShadowRadius: 5,
     },
     indicator: {
-      width: 22,
-      height: 3,
+      width: 18,
+      height: 2,
       borderRadius: 999,
       backgroundColor: 'transparent',
       marginTop: 1,
     },
     indicatorActive: {
       backgroundColor: theme.colors.accent,
+      shadowColor: theme.colors.accent,
+      shadowOpacity: theme.mode === 'light' ? 0.08 : 0.16,
+      shadowRadius: 5,
+      shadowOffset: { width: 0, height: 0 },
     },
   });
 

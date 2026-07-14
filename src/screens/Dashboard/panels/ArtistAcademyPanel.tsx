@@ -16,15 +16,15 @@ const ArtistAcademyPanel = ({ header }: ArtistAcademyPanelProps) => {
     <View style={styles.wrap}>
       {header ? <View style={styles.headerWrap}>{header}</View> : null}
       <LinearGradient colors={theme.gradients.accent} style={styles.hero}>
-        <Text style={styles.title}>Academy (Mentor)</Text>
-        <Text style={styles.sub}>Teach students. Lessons, safety modules, and progress tracking comes next.</Text>
+        <Text style={styles.title}>Academy Coming Soon</Text>
+        <Text style={styles.sub}>Tattoo craft lessons, safety modules, and mentor tools are being prepared for verified artists.</Text>
       </LinearGradient>
 
       <View style={styles.card}>
-        <Text style={styles.cardTitle}>Mentor tools (next)</Text>
-        <Text style={styles.line}>1. Create lessons (video / notes)</Text>
-        <Text style={styles.line}>2. Assign modules to students</Text>
-        <Text style={styles.line}>3. Q&A + grading</Text>
+        <Text style={styles.cardTitle}>Creative tools loading</Text>
+        <Text style={styles.line}>Safety-first tattoo learning</Text>
+        <Text style={styles.line}>Studio workflow guides</Text>
+        <Text style={styles.line}>Artist growth resources</Text>
       </View>
     </View>
   );

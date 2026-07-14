@@ -1,6 +1,7 @@
 export type DummyArtist = {
   id: string;
   name: string;
+  studioName?: string;
   handle: string;
   specialty: string;
   location: string;
@@ -10,6 +11,15 @@ export type DummyArtist = {
   startingFrom?: number;
   verified?: boolean;
   tags: readonly string[];
+  profileImageUrl?: string;
+  bookingEnabled?: boolean;
+  bookingDisabledMessage?: string;
+  availableDays?: string[];
+  startTime?: string;
+  endTime?: string;
+  vacationReturnDate?: string | null;
+  profileVisibility?: 'public' | 'private';
+  availabilityStatus?: 'available' | 'unavailable';
 };
 
 export const dummyArtists: DummyArtist[] = [
@@ -25,6 +35,7 @@ export const dummyArtists: DummyArtist[] = [
     startingFrom: 5000,
     verified: true,
     tags: ['mandala', 'geometry', 'uv', 'fine line'],
+    profileImageUrl: 'https://api.dicebear.com/8.x/initials/png?seed=Synthink&backgroundType=gradientLinear&fontFamily=Arial',
   },
   {
     id: 'artist-2',
@@ -38,6 +49,7 @@ export const dummyArtists: DummyArtist[] = [
     startingFrom: 3500,
     verified: true,
     tags: ['neo traditional', 'bold', 'color', 'sleeve'],
+    profileImageUrl: 'https://api.dicebear.com/8.x/initials/png?seed=InkNova&backgroundType=gradientLinear&fontFamily=Arial',
   },
   {
     id: 'artist-3',
@@ -51,6 +63,7 @@ export const dummyArtists: DummyArtist[] = [
     startingFrom: 2500,
     verified: true,
     tags: ['blackwork', 'contrast', 'premium', 'shadow'],
+    profileImageUrl: 'https://api.dicebear.com/8.x/initials/png?seed=Black%20Orchid&backgroundType=gradientLinear&fontFamily=Arial',
   },
   {
     id: 'artist-4',
@@ -64,6 +77,7 @@ export const dummyArtists: DummyArtist[] = [
     startingFrom: 8000,
     verified: true,
     tags: ['cyber', 'tribal', 'dark', 'pattern'],
+    profileImageUrl: 'https://api.dicebear.com/8.x/initials/png?seed=Sanya%20Void%20Rao&backgroundType=gradientLinear&fontFamily=Arial',
   },
   {
     id: 'artist-5',
@@ -77,6 +91,7 @@ export const dummyArtists: DummyArtist[] = [
     startingFrom: 5000,
     verified: true,
     tags: ['neo traditional', 'color', 'flash'],
+    profileImageUrl: 'https://api.dicebear.com/8.x/initials/png?seed=Vikram%20Ink&backgroundType=gradientLinear&fontFamily=Arial',
   },
   {
     id: 'artist-6',
@@ -90,6 +105,7 @@ export const dummyArtists: DummyArtist[] = [
     startingFrom: 3500,
     verified: true,
     tags: ['fine line', 'minimal', 'linework'],
+    profileImageUrl: 'https://api.dicebear.com/8.x/initials/png?seed=Elena%20Thorne&backgroundType=gradientLinear&fontFamily=Arial',
   },
   {
     id: 'artist-7',
@@ -103,6 +119,7 @@ export const dummyArtists: DummyArtist[] = [
     startingFrom: 2500,
     verified: true,
     tags: ['blackwork', 'sleeve', 'contrast'],
+    profileImageUrl: 'https://api.dicebear.com/8.x/initials/png?seed=Rajesh%20K&backgroundType=gradientLinear&fontFamily=Arial',
   },
   {
     id: 'artist-8',
@@ -116,6 +133,7 @@ export const dummyArtists: DummyArtist[] = [
     startingFrom: 4000,
     verified: false,
     tags: ['geometry', 'pattern', 'line'],
+    profileImageUrl: 'https://api.dicebear.com/8.x/initials/png?seed=Geometric%20Ink&backgroundType=gradientLinear&fontFamily=Arial',
   },
   {
     id: 'artist-9',
@@ -129,6 +147,7 @@ export const dummyArtists: DummyArtist[] = [
     startingFrom: 0,
     verified: false,
     tags: ['aftercare', 'healing', 'studio'],
+    profileImageUrl: 'https://api.dicebear.com/8.x/initials/png?seed=Aftercare%20Lab&backgroundType=gradientLinear&fontFamily=Arial',
   },
   {
     id: 'artist-10',
@@ -142,5 +161,6 @@ export const dummyArtists: DummyArtist[] = [
     startingFrom: 7000,
     verified: true,
     tags: ['premium', 'silver', 'finish'],
+    profileImageUrl: 'https://api.dicebear.com/8.x/initials/png?seed=Metallic%20Touch&backgroundType=gradientLinear&fontFamily=Arial',
   },
 ];

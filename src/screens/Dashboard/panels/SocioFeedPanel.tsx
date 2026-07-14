@@ -1,586 +1,1120 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { Alert, FlatList, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  Alert,
+  AppState,
+  FlatList,
+  Image,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { collection, doc, getDoc, getDocs, limit, onSnapshot, orderBy, query, where } from 'firebase/firestore';
+import { LinearGradient } from 'expo-linear-gradient';
+import { VideoView, useVideoPlayer } from 'expo-video';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import {
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  limit,
+  onSnapshot,
+  orderBy,
+  query,
+  startAfter,
+  where,
+  type DocumentData,
+  type QueryDocumentSnapshot,
+} from 'firebase/firestore';
 import { auth, db } from '../../../config/firebaseConfig';
 import { useAppTheme } from '../../../theme/useAppTheme';
 import type { AppTheme } from '../../../theme/theme';
-import { brand } from '../../../theme/brand';
-import { buildShareLink, getFollowState, getPostLikeState, sharePost, toggleFollow, toggleLike } from '../../../services/social';
+import type { ArtistPostRow } from '../../../services/posts';
+import { sharePost, toggleBlockUser, toggleFollow, toggleLike, toggleSavePost } from '../../../services/social';
+import { reportPost } from '../../../services/reports';
+import ProfileAvatar from '../../../components/ui/ProfileAvatar';
 
 type SocioFeedPanelProps = {
   header?: React.ReactNode;
+  onOpenArtistProfile?: (artistUid: string) => void;
+  onExploreArtists?: () => void;
+  onGetQuote?: () => void;
+  hideSearchBar?: boolean;
+  hideFollowAction?: boolean;
 };
 
-type SocioPost = {
-  id: string;
-  artistUid?: string;
-  artistKey: string;
+type FeedReportTarget = {
+  postId: string;
+  artistUid: string;
   artistName: string;
-  artistHandle: string;
-  artistLocation?: string;
-  caption: string;
-  timeAgo: string;
-  likesCount: number;
-  tags: readonly string[];
-  imageUrl?: string;
+  postPreview: string;
 };
 
-const relativeTime = (value: any) => {
-  const toMs = (v: any) => {
-    if (!v) return 0;
-    if (typeof v === 'number') return v;
-    if (v instanceof Date) return v.getTime();
-    if (typeof v?.toMillis === 'function') return v.toMillis();
-    if (typeof v?.seconds === 'number') return v.seconds * 1000;
-    return 0;
-  };
+type FeedMenuTarget = ArtistPostRow | null;
 
-  const ms = toMs(value);
-  if (!ms) return 'now';
+const safeTrim = (value: unknown) => String(value ?? '').trim();
+const FEED_PAGE_SIZE = 12;
 
-  const diffMin = Math.max(1, Math.floor((Date.now() - ms) / 60000));
-  if (diffMin < 60) return `${diffMin}m`;
-  const diffHr = Math.floor(diffMin / 60);
-  if (diffHr < 24) return `${diffHr}h`;
-  const diffDay = Math.floor(diffHr / 24);
-  return `${diffDay}d`;
-};
+const renderTags = (tags: unknown) =>
+  Array.isArray(tags) ? tags.map((tag) => safeTrim(tag)).filter(Boolean).slice(0, 4) : [];
 
-const SocioFeedPanel = ({ header }: SocioFeedPanelProps) => {
-  const { theme } = useAppTheme();
-  const styles = useMemo(() => createStyles(theme), [theme]);
-  const accent = useMemo(() => [brand.electricNeonBlue, brand.cyberPurple, brand.electricNeonBlue] as const, []);
-  const actionIcon = theme.colors.accent;
-
-  const [likedMap, setLikedMap] = useState<Record<string, boolean>>({});
-  const [followingMap, setFollowingMap] = useState<Record<string, boolean>>({});
-  const [likeCountMap, setLikeCountMap] = useState<Record<string, number>>({});
-  const [livePosts, setLivePosts] = useState<SocioPost[]>([]);
-  const [pendingLikeMap, setPendingLikeMap] = useState<Record<string, boolean>>({});
-  const [pendingFollowMap, setPendingFollowMap] = useState<Record<string, boolean>>({});
-  const [pendingShareMap, setPendingShareMap] = useState<Record<string, boolean>>({});
-  const [loadingFeed, setLoadingFeed] = useState(true);
-  const [feedError, setFeedError] = useState<string | null>(null);
+const FeedVideoPreview = ({
+  uri,
+  style,
+  accentColor,
+  shouldAutoPlay,
+}: {
+  uri: string;
+  style: any;
+  accentColor: string;
+  shouldAutoPlay: boolean;
+}) => {
+  const [playing, setPlaying] = useState(false);
+  const [manualPaused, setManualPaused] = useState(false);
+  const [muted, setMuted] = useState(true);
+  const player = useVideoPlayer({ uri }, (videoPlayer) => {
+    videoPlayer.loop = true;
+    videoPlayer.muted = true;
+    videoPlayer.volume = 0;
+  });
 
   useEffect(() => {
-    let cancelled = false;
-    const visibilityCache = new Map<string, boolean>();
-
-    const toPostRow = (id: string, data: any): SocioPost => {
-      const artistUid = String(data.artistUid ?? '').trim();
-      const artistName = String(data.artistName ?? 'Artist').trim() || 'Artist';
-      const artistHandle = String(data.artistHandle ?? '').trim() || `@${artistName.toLowerCase().replace(/[^a-z0-9]+/g, '_')}`;
-      const likesCount = Number(data.likesCount ?? 0);
-
-      return {
-        id,
-        artistUid: artistUid || undefined,
-        artistKey: artistUid || artistHandle,
-        artistName,
-        artistHandle,
-        artistLocation: '',
-        caption: String(data.caption ?? '').trim(),
-        timeAgo: relativeTime(data.createdAt),
-        likesCount: likesCount > 0 ? likesCount : 0,
-        tags: Array.isArray(data.tags) ? data.tags.map((t: any) => String(t)) : [],
-        imageUrl: String(data.imageUrl ?? '').trim(),
-      };
-    };
-
-    const isArtistVisible = async (artistUid: string) => {
-      const safeUid = String(artistUid ?? '').trim();
-      if (!safeUid) return false;
-      if (visibilityCache.has(safeUid)) return visibilityCache.get(safeUid) === true;
-      try {
-        const snap = await getDoc(doc(db, 'artists', safeUid));
-        if (!snap.exists()) {
-          visibilityCache.set(safeUid, false);
-          return false;
-        }
-        const data = snap.data() as any;
-        const approved = data?.verifiedPro === true || String(data?.verificationStatus ?? '') === 'approved';
-        const visible = approved && data?.isVisible !== false;
-        visibilityCache.set(safeUid, visible);
-        return visible;
-      } catch {
-        visibilityCache.set(safeUid, false);
-        return false;
-      }
-    };
-
-    const loadFallbackRows = async () => {
-      let fallbackSnap;
-      try {
-        fallbackSnap = await getDocs(
-          query(collection(db, 'posts'), where('status', '==', 'active'), orderBy('createdAt', 'desc'), limit(24)),
-        );
-      } catch {
-        // Composite index might still be building; use broad fallback and filter locally.
-        fallbackSnap = await getDocs(query(collection(db, 'posts'), orderBy('createdAt', 'desc'), limit(48)));
-      }
-      const rows: SocioPost[] = [];
-
-      for (const row of fallbackSnap.docs) {
-        const data = row.data() as any;
-        if (String(data.status ?? '') !== 'active') continue;
-        const strictApproved = data.artistApproved === true && data.artistVisible === true;
-        if (strictApproved) {
-          rows.push(toPostRow(row.id, data));
-          continue;
-        }
-        const safeArtistUid = String(data.artistUid ?? '').trim();
-        if (!safeArtistUid) continue;
-        const fallbackVisible = await isArtistVisible(safeArtistUid);
-        if (!fallbackVisible) continue;
-        rows.push(toPostRow(row.id, data));
-      }
-
-      if (!cancelled) {
-        setFeedError(null);
-        setLoadingFeed(false);
-        setLivePosts(rows);
-      }
-    };
-
-    const q = query(
-      collection(db, 'posts'),
-      where('status', '==', 'active'),
-      where('artistApproved', '==', true),
-      where('artistVisible', '==', true),
-      orderBy('createdAt', 'desc'),
-      limit(24),
-    );
-    const unsub = onSnapshot(
-      q,
-      (snap) => {
-        const rows = snap.docs.map((d) => toPostRow(d.id, d.data() as any));
-        if (rows.length > 0) {
-          setFeedError(null);
-          setLoadingFeed(false);
-          setLivePosts(rows);
-          return;
-        }
-        void loadFallbackRows().catch(() => {
-          if (!cancelled) {
-            setFeedError('Something went wrong. Try again.');
-            setLoadingFeed(false);
-            setLivePosts([]);
-          }
-        });
-      },
-      () => {
-        void loadFallbackRows().catch(() => {
-          setFeedError('Something went wrong. Try again.');
-          setLoadingFeed(false);
-          setLivePosts([]);
-        });
-      },
-    );
-
-    return () => {
-      cancelled = true;
-      unsub();
-    };
-  }, []);
-
-  const posts = useMemo(() => livePosts, [livePosts]);
+    setManualPaused(false);
+    setPlaying(false);
+    setMuted(true);
+  }, [uri]);
 
   useEffect(() => {
-    const actor = auth.currentUser;
-    if (!actor) {
-      setLikedMap({});
-      setFollowingMap({});
-      const counts: Record<string, number> = {};
-      posts.forEach((row) => {
-        counts[row.id] = Number(row.likesCount ?? 0);
-      });
-      setLikeCountMap(counts);
+    player.muted = muted;
+    player.volume = muted ? 0 : 1;
+  }, [muted, player]);
+
+  useEffect(() => {
+    if (shouldAutoPlay && !manualPaused) {
+      player.play();
+      setPlaying(true);
       return;
     }
-    let isActive = true;
+    player.pause();
+    setPlaying(false);
+  }, [manualPaused, player, shouldAutoPlay]);
 
-    const nextLikeCounts: Record<string, number> = {};
-    posts.forEach((row) => {
-      nextLikeCounts[row.id] = Number(row.likesCount ?? 0);
-    });
-
-    setLikeCountMap(nextLikeCounts);
-
-    (async () => {
-      const likeEntries = await Promise.all(
-        posts.map(async (row) => [row.id, await getPostLikeState(row.id, actor.uid).catch(() => false)] as const),
-      );
-      const followEntries = await Promise.all(
-        posts.map(async (row) => [row.artistKey, await getFollowState(row.artistUid, actor.uid).catch(() => false)] as const),
-      );
-
-      if (!isActive) return;
-      setLikedMap(Object.fromEntries(likeEntries));
-      setFollowingMap(Object.fromEntries(followEntries));
-    })();
-
-    return () => {
-      isActive = false;
-    };
-  }, [posts]);
-
-  const ensureSignedIn = () => {
-    if (!auth.currentUser) {
-      Alert.alert('Tatzo', 'Please sign in to use this action.');
-      return false;
+  const togglePlayback = () => {
+    if (playing) {
+      player.pause();
+      setManualPaused(true);
+      setPlaying(false);
+      return;
     }
-    return true;
+    setManualPaused(false);
+    player.play();
+    setPlaying(true);
   };
 
   return (
-    <FlatList
-      data={posts}
-      keyExtractor={(item) => item.id}
-      showsVerticalScrollIndicator={false}
-      contentContainerStyle={{ paddingBottom: 110 }}
-      ListHeaderComponent={
-        <View style={styles.headerWrap}>
-          {header ? <View style={styles.externalHeader}>{header}</View> : null}
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Feed</Text>
-            <Text style={styles.sectionBadge}>Socio</Text>
-          </View>
-        </View>
-      }
-      renderItem={({ item }) => (
-        <View style={styles.card}>
-          <View style={styles.cardHeader}>
-            <View style={styles.profileRow}>
-              <LinearGradient colors={accent} style={styles.avatar}>
-                <Text style={styles.avatarText}>{item.artistName.charAt(0)}</Text>
-              </LinearGradient>
-              <View style={styles.profileCopy}>
-                <Text style={styles.artistName}>{item.artistName}</Text>
-                <Text style={styles.artistMeta}>
-                  {item.artistHandle}
-                  {item.artistLocation ? ` | ${item.artistLocation}` : ''}
-                  {` | ${item.timeAgo}`}
-                </Text>
-              </View>
-            </View>
-            <TouchableOpacity activeOpacity={0.85} onPress={() => Alert.alert('Tatzo', 'Post options soon.')}>
-              <Ionicons name="ellipsis-horizontal" size={18} color={theme.colors.textMuted} />
-            </TouchableOpacity>
-          </View>
-
-          <LinearGradient colors={[theme.colors.backgroundAlt, 'rgba(0, 229, 255, 0.16)', 'rgba(122, 92, 255, 0.22)']} style={styles.media}>
-            <View style={styles.mediaOverlay}>
-              <Text style={styles.mediaLabel}>{item.imageUrl ? item.imageUrl : 'Design preview placeholder'}</Text>
-            </View>
-          </LinearGradient>
-
-          <View style={styles.actionsRow}>
-            <TouchableOpacity
-              activeOpacity={0.85}
-              disabled={pendingLikeMap[item.id] === true}
-              onPress={async () => {
-                if (!ensureSignedIn()) return;
-                if (pendingLikeMap[item.id]) return;
-                const wasLiked = Boolean(likedMap[item.id]);
-                const previousCount = Number(likeCountMap[item.id] ?? item.likesCount ?? 0);
-                const optimisticLiked = !wasLiked;
-                const optimisticCount = Math.max(0, previousCount + (optimisticLiked ? 1 : -1));
-
-                setPendingLikeMap((prev) => ({ ...prev, [item.id]: true }));
-                setLikedMap((prev) => ({ ...prev, [item.id]: optimisticLiked }));
-                setLikeCountMap((prev) => ({ ...prev, [item.id]: optimisticCount }));
-                try {
-                  const result = await toggleLike({
-                    postId: item.id,
-                    artist: { uid: item.artistUid, displayName: item.artistName, handle: item.artistHandle },
-                    postPreview: item.caption,
-                  });
-                  const finalCount = Math.max(0, previousCount + (result.liked ? 1 : -1));
-                  setLikedMap((prev) => ({ ...prev, [item.id]: result.liked }));
-                  setLikeCountMap((prev) => ({ ...prev, [item.id]: finalCount }));
-                } catch (error: any) {
-                  setLikedMap((prev) => ({ ...prev, [item.id]: wasLiked }));
-                  setLikeCountMap((prev) => ({ ...prev, [item.id]: previousCount }));
-                  Alert.alert('Tatzo', error?.message ?? 'Could not like right now.');
-                } finally {
-                  setPendingLikeMap((prev) => ({ ...prev, [item.id]: false }));
-                }
-              }}
-              style={[styles.actionButton, pendingLikeMap[item.id] && styles.actionButtonDisabled]}
-            >
-              <Ionicons name={likedMap[item.id] ? 'heart' : 'heart-outline'} size={18} color={actionIcon} />
-            </TouchableOpacity>
-            <TouchableOpacity
-              activeOpacity={0.85}
-              disabled={pendingShareMap[item.id] === true}
-              onPress={async () => {
-                if (!ensureSignedIn()) return;
-                if (pendingShareMap[item.id]) return;
-                setPendingShareMap((prev) => ({ ...prev, [item.id]: true }));
-                try {
-                  const link = buildShareLink(item.id);
-                  await sharePost({
-                    postId: item.id,
-                    artist: { uid: item.artistUid, displayName: item.artistName, handle: item.artistHandle },
-                    postPreview: item.caption,
-                    shareMessage: `Tatzo\n${link}\n\n${item.caption}`,
-                  });
-                } catch (error: any) {
-                  Alert.alert('Tatzo', error?.message ?? 'Could not share right now.');
-                } finally {
-                  setPendingShareMap((prev) => ({ ...prev, [item.id]: false }));
-                }
-              }}
-              style={[styles.actionButton, pendingShareMap[item.id] && styles.actionButtonDisabled]}
-            >
-              <Ionicons name="share-social-outline" size={18} color={actionIcon} />
-            </TouchableOpacity>
-            <TouchableOpacity
-              activeOpacity={0.85}
-              disabled={pendingFollowMap[item.artistKey] === true}
-              onPress={async () => {
-                if (!ensureSignedIn()) return;
-                if (pendingFollowMap[item.artistKey]) return;
-                const previous = Boolean(followingMap[item.artistKey]);
-                const optimistic = !previous;
-                setPendingFollowMap((prev) => ({ ...prev, [item.artistKey]: true }));
-                setFollowingMap((prev) => ({ ...prev, [item.artistKey]: optimistic }));
-                try {
-                  const result = await toggleFollow({ artist: { uid: item.artistUid, displayName: item.artistName, handle: item.artistHandle } });
-                  if (!result.targetUid) {
-                    setFollowingMap((prev) => ({ ...prev, [item.artistKey]: previous }));
-                    Alert.alert('Tatzo', 'Artist profile mapping not found yet.');
-                  } else {
-                    setFollowingMap((prev) => ({ ...prev, [item.artistKey]: result.following }));
-                  }
-                } catch (error: any) {
-                  setFollowingMap((prev) => ({ ...prev, [item.artistKey]: previous }));
-                  Alert.alert('Tatzo', error?.message ?? 'Could not follow right now.');
-                } finally {
-                  setPendingFollowMap((prev) => ({ ...prev, [item.artistKey]: false }));
-                }
-              }}
-              style={[styles.actionButton, pendingFollowMap[item.artistKey] && styles.actionButtonDisabled]}
-            >
-              <Ionicons name={followingMap[item.artistKey] ? 'person' : 'person-add-outline'} size={18} color={actionIcon} />
-            </TouchableOpacity>
-            <TouchableOpacity
-              activeOpacity={0.85}
-              onPress={() => Alert.alert('Tatzo', 'Reported (placeholder).')}
-              style={[styles.actionButton, styles.reportButton]}
-            >
-              <Ionicons name="flag-outline" size={18} color={theme.mode === 'light' ? '#6E2F2A' : '#ffd3cf'} />
-            </TouchableOpacity>
-          </View>
-
-          <View style={styles.metaRow}>
-            <Text style={styles.likes}>{Number(likeCountMap[item.id] ?? item.likesCount ?? 0)} likes</Text>
-          </View>
-          <Text style={styles.caption}>{item.caption}</Text>
-          <View style={styles.tagsRow}>
-            {item.tags.map((tag) => (
-              <View key={`${item.id}_${tag}`} style={styles.tagPill}>
-                <Text style={styles.tagText}>{tag}</Text>
-              </View>
-            ))}
+    <Pressable style={style} onPress={togglePlayback}>
+      <VideoView player={player} style={StyleSheet.absoluteFillObject} nativeControls={false} contentFit="cover" fullscreenOptions={{ enable: false }} />
+      <View style={feedVideoStyles.reelBadge}>
+        <Ionicons name="play" size={10} color="#ffffff" />
+        <Text style={feedVideoStyles.reelBadgeText}>REEL</Text>
+      </View>
+      <TouchableOpacity activeOpacity={0.85} onPress={() => setMuted((value) => !value)} style={feedVideoStyles.soundButton}>
+        <Ionicons name={muted ? 'volume-mute' : 'volume-high'} size={15} color="#ffffff" />
+      </TouchableOpacity>
+      {playing ? null : (
+        <View style={feedVideoStyles.playOverlay}>
+          <View style={[feedVideoStyles.playButton, { borderColor: accentColor }]}>
+            <Ionicons name="play" size={24} color="#ffffff" />
           </View>
         </View>
       )}
-      ListEmptyComponent={
-        <View style={styles.emptyWrap}>
-          <Text style={styles.emptyTitle}>
-            {loadingFeed ? 'Loading feed...' : feedError ? 'Something went wrong' : 'No artist posts yet'}
-          </Text>
-          <Text style={styles.emptySub}>
-            {loadingFeed
-              ? 'Please wait a moment.'
-              : feedError
-                ? 'Try again.'
-                : 'Approved artist posts will appear here.'}
-          </Text>
-        </View>
-      }
-    />
+    </Pressable>
   );
 };
 
+const friendlyActionError = (error: unknown, fallback: string) => {
+  const code = String((error as any)?.code ?? '').toLowerCase();
+  const message = String((error as any)?.message ?? '').trim();
+  if (code.includes('permission-denied') || message.toLowerCase().includes('missing or insufficient permissions')) {
+    return 'Tatzo could not complete that action right now. Please try again.';
+  }
+  if (message) return message;
+  return fallback;
+};
+
+const SocioFeedPanel = ({
+  header,
+  onOpenArtistProfile,
+  onExploreArtists,
+  onGetQuote,
+  hideSearchBar = false,
+  hideFollowAction = false,
+}: SocioFeedPanelProps) => {
+  const { theme } = useAppTheme();
+  const insets = useSafeAreaInsets();
+  const styles = useMemo(() => createStyles(theme), [theme]);
+  const uid = auth.currentUser?.uid ?? '';
+
+  const [posts, setPosts] = useState<ArtistPostRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
+  const [pageCursor, setPageCursor] = useState<QueryDocumentSnapshot<DocumentData> | null>(null);
+  const didLoadPosts = useRef(false);
+  const [search, setSearch] = useState('');
+  const [savedIds, setSavedIds] = useState<Set<string>>(new Set());
+  const [likedIds, setLikedIds] = useState<Set<string>>(new Set());
+  const [followingIds, setFollowingIds] = useState<Set<string>>(new Set());
+  const [blockedArtistIds, setBlockedArtistIds] = useState<Set<string>>(new Set());
+  const [artistMetaMap, setArtistMetaMap] = useState<Record<string, { location: string; studioName: string }>>({});
+  const [busyPostId, setBusyPostId] = useState<string | null>(null);
+  const [menuTarget, setMenuTarget] = useState<FeedMenuTarget>(null);
+  const [reportTarget, setReportTarget] = useState<FeedReportTarget | null>(null);
+  const [reportReason, setReportReason] = useState('');
+  const [sharingPostId, setSharingPostId] = useState<string | null>(null);
+  const [activeVideoPostId, setActiveVideoPostId] = useState<string | null>(null);
+  const [appActive, setAppActive] = useState(AppState.currentState === 'active');
+
+  const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 70 }).current;
+  const handleViewableItemsChanged = useRef(
+    ({ viewableItems }: { viewableItems: Array<{ item?: ArtistPostRow }> }) => {
+      const nextVideo = viewableItems
+        .map((row) => row.item)
+        .find((post) => post && (post.mediaType === 'video' || Boolean(safeTrim(post.videoUrl))));
+      setActiveVideoPostId(nextVideo?.id ?? null);
+    },
+  ).current;
+
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => setAppActive(state === 'active'));
+    return () => sub.remove();
+  }, []);
+
+  const loadPosts = useCallback(async (reset = false) => {
+    if (!reset && (loadingMore || !hasMore)) return;
+    if (reset) setRefreshing(true);
+    else setLoadingMore(true);
+
+    try {
+      const constraints = [where('status', '==', 'active'), orderBy('createdAt', 'desc'), limit(FEED_PAGE_SIZE)];
+      const postsQuery = reset || !pageCursor
+        ? query(collection(db, 'posts'), ...constraints)
+        : query(collection(db, 'posts'), ...constraints.slice(0, 2), startAfter(pageCursor), limit(FEED_PAGE_SIZE));
+      const snap = await getDocs(postsQuery);
+      const nextRows = snap.docs.map((row) => ({ id: row.id, ...(row.data() as any) }) as ArtistPostRow);
+
+      setPosts((current) => {
+        if (reset) return nextRows;
+        const merged = new Map(current.map((post) => [post.id, post]));
+        nextRows.forEach((post) => merged.set(post.id, post));
+        return Array.from(merged.values());
+      });
+      setPageCursor(snap.docs.at(-1) ?? null);
+      setHasMore(snap.docs.length === FEED_PAGE_SIZE);
+    } catch {
+      if (reset) setPosts([]);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+      setLoadingMore(false);
+    }
+  }, [hasMore, loadingMore, pageCursor]);
+
+  useEffect(() => {
+    if (didLoadPosts.current) return;
+    didLoadPosts.current = true;
+    void loadPosts(true);
+  }, [loadPosts]);
+
+  useEffect(() => {
+    if (!uid) return;
+    const unsub = onSnapshot(
+      collection(db, 'users', uid, 'savedPosts'),
+      (snap) => setSavedIds(new Set(snap.docs.map((row) => row.id))),
+      () => setSavedIds(new Set()),
+    );
+    return () => unsub();
+  }, [uid]);
+
+  useEffect(() => {
+    if (!uid) {
+      setLikedIds(new Set());
+      return;
+    }
+    const unsub = onSnapshot(
+      collection(db, 'users', uid, 'likedPosts'),
+      (snap) => setLikedIds(new Set(snap.docs.map((row) => row.id))),
+      () => setLikedIds(new Set()),
+    );
+    return () => unsub();
+  }, [uid]);
+
+  useEffect(() => {
+    if (!uid) {
+      setFollowingIds(new Set());
+      return;
+    }
+    const unsub = onSnapshot(
+      collection(db, 'users', uid, 'following'),
+      (snap) =>
+        setFollowingIds(
+          new Set(
+            snap.docs
+              .map((row) => String((row.data() as any)?.artistUid ?? row.id).trim())
+              .filter(Boolean),
+          ),
+        ),
+      () => setFollowingIds(new Set()),
+    );
+    return () => unsub();
+  }, [uid]);
+
+  useEffect(() => {
+    if (!uid) {
+      setBlockedArtistIds(new Set());
+      return;
+    }
+    const unsub = onSnapshot(
+      collection(db, 'users', uid, 'blockedUsers'),
+      (snap) => setBlockedArtistIds(new Set(snap.docs.map((row) => row.id))),
+      () => setBlockedArtistIds(new Set()),
+    );
+    return () => unsub();
+  }, [uid]);
+
+  useEffect(() => {
+    const artistUids = Array.from(new Set(posts.map((post) => String(post.artistUid ?? '').trim()).filter(Boolean)));
+    if (!artistUids.length) {
+      setArtistMetaMap({});
+      return;
+    }
+
+    let cancelled = false;
+    (async () => {
+      const entries = await Promise.all(
+        artistUids.map(async (artistUid) => {
+          try {
+            const snap = await getDoc(doc(db, 'artists', artistUid));
+            if (!snap.exists()) return [artistUid, { location: '', studioName: '' }] as const;
+            const data = snap.data() as any;
+            const location = String((data?.location || [data?.locationArea, data?.locationCity].filter(Boolean).join(', ')) ?? '').trim();
+            const studioName = String(data?.studioName ?? data?.shopName ?? '').trim();
+            return [artistUid, { location, studioName }] as const;
+          } catch {
+            return [artistUid, { location: '', studioName: '' }] as const;
+          }
+        }),
+      );
+
+      if (cancelled) return;
+      setArtistMetaMap(
+        entries.reduce<Record<string, { location: string; studioName: string }>>((acc, [artistUid, meta]) => {
+          acc[artistUid] = meta;
+          return acc;
+        }, {}),
+      );
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [posts]);
+
+  const visiblePosts = useMemo(() => {
+    const needle = search.trim().toLowerCase();
+    return posts.filter((post) => {
+      if (post.artistVisible === false || post.artistApproved === false || post.bookingVisible === false) return false;
+      if (blockedArtistIds.has(post.artistUid)) return false;
+      if (!needle) return true;
+      const haystack = [
+        post.caption,
+        post.artistName,
+        post.artistHandle,
+        (post.tags ?? []).join(' '),
+        post.artistProfileImageUrl,
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+      return haystack.includes(needle);
+    });
+  }, [blockedArtistIds, posts, search]);
+
+  const handleSave = async (post: ArtistPostRow) => {
+    if (!uid) return Alert.alert('Tatzo', 'Please sign in first.');
+    setBusyPostId(post.id);
+    const wasSaved = savedIds.has(post.id);
+    setSavedIds((prev) => {
+      const next = new Set(prev);
+      if (wasSaved) next.delete(post.id);
+      else next.add(post.id);
+      return next;
+    });
+    try {
+      await toggleSavePost({ postId: post.id, postPreview: post.caption });
+    } catch (error: any) {
+      setSavedIds((prev) => {
+        const next = new Set(prev);
+        if (wasSaved) next.add(post.id);
+        else next.delete(post.id);
+        return next;
+      });
+      Alert.alert('Tatzo', friendlyActionError(error, 'Could not save this post.'));
+    } finally {
+      setBusyPostId(null);
+    }
+  };
+
+  const handleLike = async (post: ArtistPostRow) => {
+    if (!uid) return Alert.alert('Tatzo', 'Please sign in first.');
+    setBusyPostId(post.id);
+    const wasLiked = likedIds.has(post.id);
+    setLikedIds((prev) => {
+      const next = new Set(prev);
+      if (wasLiked) next.delete(post.id);
+      else next.add(post.id);
+      return next;
+    });
+    try {
+      const result = await toggleLike({
+        postId: post.id,
+        artist: { uid: post.artistUid, displayName: post.artistName, handle: post.artistHandle ?? undefined },
+        postPreview: post.caption,
+      });
+      setLikedIds((prev) => {
+        const next = new Set(prev);
+        if (result.liked) next.add(post.id);
+        else next.delete(post.id);
+        return next;
+      });
+    } catch (error: any) {
+      setLikedIds((prev) => {
+        const next = new Set(prev);
+        if (wasLiked) next.add(post.id);
+        else next.delete(post.id);
+        return next;
+      });
+      Alert.alert('Tatzo', friendlyActionError(error, 'Could not like this post.'));
+    } finally {
+      setBusyPostId(null);
+    }
+  };
+
+  const handleFollow = async (post: ArtistPostRow) => {
+    if (!uid) return Alert.alert('Tatzo', 'Please sign in first.');
+    setBusyPostId(post.id);
+    const wasFollowing = followingIds.has(post.artistUid);
+    setFollowingIds((prev) => {
+      const next = new Set(prev);
+      if (wasFollowing) next.delete(post.artistUid);
+      else next.add(post.artistUid);
+      return next;
+    });
+    try {
+      await toggleFollow({
+        artist: { uid: post.artistUid, displayName: post.artistName, handle: post.artistHandle ?? undefined },
+      });
+    } catch (error: any) {
+      setFollowingIds((prev) => {
+        const next = new Set(prev);
+        if (wasFollowing) next.add(post.artistUid);
+        else next.delete(post.artistUid);
+        return next;
+      });
+      Alert.alert('Tatzo', friendlyActionError(error, 'Could not follow this artist.'));
+    } finally {
+      setBusyPostId(null);
+    }
+  };
+
+  const handleShare = async (post: ArtistPostRow) => {
+    if (!uid) return Alert.alert('Tatzo', 'Please sign in first.');
+    setSharingPostId(post.id);
+    try {
+      await sharePost({
+        postId: post.id,
+        artist: { uid: post.artistUid, displayName: post.artistName, handle: post.artistHandle ?? undefined },
+        postPreview: post.caption,
+        shareMessage: `${post.artistName} on Tatzo`,
+      });
+    } catch (error: any) {
+      Alert.alert('Tatzo', friendlyActionError(error, 'Could not share this post.'));
+    } finally {
+      setSharingPostId(null);
+    }
+  };
+
+  const handleBlock = async (post: ArtistPostRow) => {
+    if (!uid) return Alert.alert('Tatzo', 'Please sign in first.');
+    try {
+      await toggleBlockUser({
+        blockedUid: post.artistUid,
+        blockedName: post.artistName,
+        blockedProfileImageUrl: post.artistProfileImageUrl ?? undefined,
+      });
+      setBlockedArtistIds((prev) => new Set(prev).add(post.artistUid));
+    } catch (error: any) {
+      Alert.alert('Tatzo', friendlyActionError(error, 'Could not block this artist.'));
+    }
+  };
+
+  const handleReport = async () => {
+    if (!reportTarget) return;
+    const reason = reportReason.trim();
+    if (!reason) {
+      Alert.alert('Tatzo', 'Please tell us why you are reporting this post.');
+      return;
+    }
+    try {
+      await reportPost({ postId: reportTarget.postId, postOwnerUid: reportTarget.artistUid, reason });
+      setReportTarget(null);
+      setReportReason('');
+      Alert.alert('Tatzo', 'Report submitted.');
+    } catch (error: any) {
+      Alert.alert('Tatzo', friendlyActionError(error, 'Could not submit report.'));
+    }
+  };
+
+  const renderPost = ({ item }: { item: ArtistPostRow }) => {
+    const imageUrl = safeTrim(item.imageUrl);
+    const videoUrl = safeTrim(item.videoUrl);
+    const isVideo = item.mediaType === 'video' || Boolean(videoUrl);
+    const isSaved = savedIds.has(item.id);
+    const isLiked = likedIds.has(item.id);
+    const isBusy = busyPostId === item.id;
+    const isSharing = sharingPostId === item.id;
+    const tags = renderTags(item.tags);
+    const artistMeta = artistMetaMap[item.artistUid] ?? { location: '', studioName: '' };
+    const locationLine =
+      safeTrim(artistMeta.studioName) && safeTrim(artistMeta.location)
+        ? `${safeTrim(artistMeta.studioName)} • ${safeTrim(artistMeta.location)}`
+        : safeTrim(artistMeta.studioName) || safeTrim(artistMeta.location) || 'Chennai, Tamil Nadu';
+
+    return (
+      <View style={styles.card}>
+        <View style={styles.cardHeader}>
+          <TouchableOpacity activeOpacity={0.9} style={styles.cardHeaderPressable} onPress={() => onOpenArtistProfile?.(item.artistUid)}>
+            <ProfileAvatar uri={item.artistProfileImageUrl ?? undefined} name={item.artistName} size={42} />
+            <View style={styles.cardHeaderCopy}>
+              <View style={styles.nameRow}>
+                <Text style={styles.artistName} numberOfLines={1}>{item.artistName}</Text>
+                {item.artistApproved ? <Ionicons name="checkmark-circle" size={14} color={theme.colors.accentStrong} /> : null}
+              </View>
+              <Text style={styles.artistMeta} numberOfLines={1}>{locationLine}</Text>
+            </View>
+          </TouchableOpacity>
+          <TouchableOpacity activeOpacity={0.85} style={styles.menuButton} onPress={() => setMenuTarget(item)}>
+            <Ionicons name="ellipsis-vertical" size={14} color={theme.colors.textMuted} />
+          </TouchableOpacity>
+        </View>
+
+        <View style={[styles.mediaShell, isVideo ? styles.reelMediaShell : styles.imageMediaShell]}>
+          {isVideo && videoUrl ? (
+            <FeedVideoPreview
+              uri={videoUrl}
+              style={styles.media}
+              accentColor={theme.colors.accent}
+              shouldAutoPlay={appActive && activeVideoPostId === item.id}
+            />
+          ) : imageUrl ? (
+            <Image source={{ uri: imageUrl }} style={styles.media} resizeMode="cover" />
+          ) : (
+            <LinearGradient colors={theme.gradients.dark} style={styles.mediaFallback}>
+              <Ionicons name={isVideo ? 'play-circle-outline' : 'image-outline'} size={26} color={theme.colors.textInverse} />
+              <Text style={styles.mediaFallbackText}>{isVideo ? 'Reel' : 'Post'}</Text>
+            </LinearGradient>
+          )}
+        </View>
+
+        <Text style={styles.caption} numberOfLines={2}>{item.caption || 'Tattoo art from Tatzo'}</Text>
+
+        {tags.length ? (
+          <View style={styles.tagRow}>
+            {tags.map((tag) => (
+              <View key={tag} style={styles.tagPill}>
+                <Text style={styles.tagText}>#{tag}</Text>
+              </View>
+            ))}
+          </View>
+        ) : null}
+
+        <View style={styles.actionRow}>
+          <View style={styles.leftActionRow}>
+            <TouchableOpacity
+              activeOpacity={0.9}
+              style={[styles.actionIconButton, isLiked && styles.actionIconButtonActive]}
+              onPress={() => handleLike(item)}
+              disabled={isBusy}
+            >
+              <Ionicons name={isLiked ? 'heart' : 'heart-outline'} size={18} color={isLiked ? theme.colors.accent : theme.colors.textMuted} />
+            </TouchableOpacity>
+            <TouchableOpacity activeOpacity={0.9} style={styles.actionIconButton} onPress={() => handleShare(item)} disabled={isSharing}>
+              <Ionicons name="share-social-outline" size={18} color={theme.colors.textMuted} />
+            </TouchableOpacity>
+            {hideFollowAction ? null : (
+              <TouchableOpacity
+                activeOpacity={0.9}
+                style={[styles.actionIconButton, followingIds.has(item.artistUid) && styles.actionIconButtonActive]}
+                onPress={() => handleFollow(item)}
+                disabled={isBusy}
+              >
+                <Ionicons
+                  name={followingIds.has(item.artistUid) ? 'person' : 'person-add-outline'}
+                  size={18}
+                  color={followingIds.has(item.artistUid) ? theme.colors.accent : theme.colors.textMuted}
+                />
+              </TouchableOpacity>
+            )}
+          </View>
+          <TouchableOpacity
+            activeOpacity={0.9}
+            style={[styles.actionIconButton, styles.saveAction, isSaved && styles.actionIconButtonActive]}
+            onPress={() => handleSave(item)}
+            disabled={isBusy}
+          >
+            <Ionicons name={isSaved ? 'bookmark' : 'bookmark-outline'} size={18} color={isSaved ? theme.colors.accent : theme.colors.textMuted} />
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  };
+
+  return (
+    <View style={styles.container}>
+      {header ? <View style={styles.headerWrap}>{header}</View> : null}
+
+      {hideSearchBar ? null : (
+        <View style={styles.searchCard}>
+          <View style={styles.searchRow}>
+            <Ionicons name="search-outline" size={18} color={theme.colors.textMuted} />
+            <TextInput
+              value={search}
+              onChangeText={setSearch}
+              placeholder="Search artists, tags, tattoos..."
+              placeholderTextColor={theme.colors.textMuted}
+              style={styles.searchInput}
+            />
+          </View>
+          <View style={styles.discoveryRow}>
+            <TouchableOpacity activeOpacity={0.9} style={styles.discoveryPill} onPress={onExploreArtists}>
+              <Text style={styles.discoveryPillText}>Trending Posts</Text>
+            </TouchableOpacity>
+            <TouchableOpacity activeOpacity={0.9} style={styles.discoveryPill} onPress={onGetQuote}>
+              <Text style={styles.discoveryPillText}>Find Artist</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+
+      {loading ? (
+        <View style={styles.loadingState}>
+          <Text style={styles.loadingText}>Loading feed...</Text>
+        </View>
+      ) : (
+        <FlatList
+          data={visiblePosts}
+          keyExtractor={(item) => item.id}
+          renderItem={renderPost}
+          contentContainerStyle={[styles.listContent, { paddingBottom: 120 + insets.bottom }]}
+          onViewableItemsChanged={handleViewableItemsChanged}
+          viewabilityConfig={viewabilityConfig}
+          showsVerticalScrollIndicator={false}
+          refreshing={refreshing}
+          onRefresh={() => void loadPosts(true)}
+          onEndReachedThreshold={0.55}
+          onEndReached={() => void loadPosts(false)}
+          ListFooterComponent={loadingMore ? <Text style={styles.loadingText}>Loading more...</Text> : null}
+          ListEmptyComponent={
+            <View style={styles.emptyState}>
+              <Ionicons name="albums-outline" size={26} color={theme.colors.textMuted} />
+              <Text style={styles.emptyTitle}>No posts yet</Text>
+              <Text style={styles.emptyBody}>Discover tattoo photos and reels from approved artists here.</Text>
+            </View>
+          }
+        />
+      )}
+
+      <Modal visible={Boolean(menuTarget)} transparent animationType="fade" onRequestClose={() => setMenuTarget(null)}>
+        <Pressable style={styles.menuBackdrop} onPress={() => setMenuTarget(null)} />
+        <View style={styles.menuSheetWrap}>
+          <View style={styles.menuSheet}>
+            <Text style={styles.menuSheetTitle}>More</Text>
+            <TouchableOpacity
+              activeOpacity={0.9}
+              style={styles.menuSheetAction}
+              onPress={() => {
+                if (!menuTarget) return;
+                setReportTarget({
+                  postId: menuTarget.id,
+                  artistUid: menuTarget.artistUid,
+                  artistName: menuTarget.artistName,
+                  postPreview: menuTarget.caption,
+                });
+                setMenuTarget(null);
+              }}
+            >
+              <Ionicons name="flag-outline" size={18} color={theme.colors.accent} />
+              <Text style={styles.menuSheetActionText}>Report</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              activeOpacity={0.9}
+              style={styles.menuSheetAction}
+              onPress={() => {
+                if (!menuTarget) return;
+                handleBlock(menuTarget);
+                setMenuTarget(null);
+              }}
+            >
+              <Ionicons name="ban-outline" size={18} color={theme.colors.accent} />
+              <Text style={styles.menuSheetActionText}>Block</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal visible={Boolean(reportTarget)} transparent animationType="fade" onRequestClose={() => setReportTarget(null)}>
+        <Pressable style={styles.backdrop} onPress={() => setReportTarget(null)} />
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.sheetWrap}>
+          <View style={styles.sheet}>
+            <View style={styles.sheetHeader}>
+              <Text style={styles.sheetTitle}>Report post</Text>
+              <TouchableOpacity activeOpacity={0.9} onPress={() => setReportTarget(null)} style={styles.iconBtn}>
+                <Ionicons name="close" size={16} color={theme.mode === 'light' ? theme.colors.text : theme.colors.textInverse} />
+              </TouchableOpacity>
+            </View>
+            <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.sheetBody}>
+              <Text style={styles.sheetText}>Tell us what went wrong. You can also block this artist from the 3-dot menu above.</Text>
+              <TextInput
+                value={reportReason}
+                onChangeText={setReportReason}
+                placeholder="Why are you reporting this post?"
+                placeholderTextColor={theme.colors.textMuted}
+                style={[styles.input, styles.reportInput]}
+                multiline
+              />
+              <View style={styles.sheetActions}>
+                <TouchableOpacity activeOpacity={0.9} onPress={() => setReportTarget(null)} style={styles.secondaryBtn}>
+                  <Text style={styles.secondaryBtnText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity activeOpacity={0.9} onPress={handleReport} style={styles.primaryBtn}>
+                  <Text style={styles.primaryBtnText}>Submit report</Text>
+                </TouchableOpacity>
+              </View>
+            </ScrollView>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+    </View>
+  );
+};
+
+const feedVideoStyles = StyleSheet.create({
+  reelBadge: {
+    position: 'absolute',
+    top: 10,
+    left: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 999,
+    backgroundColor: 'rgba(0,0,0,0.48)',
+  },
+  reelBadgeText: {
+    color: '#ffffff',
+    fontSize: 9,
+    fontWeight: '900',
+    letterSpacing: 0.5,
+  },
+  soundButton: {
+    position: 'absolute',
+    right: 12,
+    top: 12,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0,0,0,0.48)',
+  },
+  playOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0,0,0,0.08)',
+  },
+  playButton: {
+    width: 54,
+    height: 54,
+    borderRadius: 27,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    backgroundColor: 'rgba(0,0,0,0.34)',
+  },
+});
+
 const createStyles = (theme: AppTheme) =>
   StyleSheet.create({
-    headerWrap: {
-      paddingHorizontal: 18,
-      paddingTop: 8,
-      paddingBottom: 14,
-      gap: 14,
-    },
-    externalHeader: {
-      gap: 18,
-    },
-    sectionHeader: {
-      flexDirection: 'row',
-      justifyContent: 'space-between',
-      alignItems: 'center',
-    },
-    sectionTitle: {
-      color: theme.mode === 'light' ? theme.colors.text : theme.colors.textInverse,
-      fontSize: 20,
-      fontFamily: theme.fonts.display,
-    },
-    sectionBadge: {
-      color: theme.colors.accent,
-      backgroundColor: theme.colors.accentSoft,
-      borderRadius: 999,
-      paddingHorizontal: 10,
-      paddingVertical: 5,
-      fontSize: 11,
-      fontWeight: '700',
-      borderWidth: 1,
-      borderColor: theme.mode === 'light' ? 'rgba(122, 92, 255, 0.22)' : 'rgba(122, 92, 255, 0.3)',
-    },
-    card: {
+    container: { flex: 1 },
+    headerWrap: { marginBottom: 8 },
+    searchCard: {
       marginHorizontal: 18,
-      marginBottom: 14,
-      backgroundColor: theme.colors.surface,
-      borderRadius: 24,
+      marginBottom: 12,
+      borderRadius: 20,
       borderWidth: 1,
       borderColor: theme.colors.border,
-      overflow: 'hidden',
+      backgroundColor: theme.mode === 'light' ? 'rgba(255,255,255,0.92)' : 'rgba(255,255,255,0.03)',
+      padding: 12,
+      gap: 8,
     },
-    cardHeader: {
-      flexDirection: 'row',
-      justifyContent: 'space-between',
-      alignItems: 'center',
-      paddingHorizontal: 14,
-      paddingVertical: 12,
-    },
-    profileRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 12,
-      flex: 1,
-    },
-    avatar: {
-      width: 40,
-      height: 40,
-      borderRadius: 14,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    avatarText: {
-      color: theme.colors.textInverse,
-      fontWeight: '800',
-      fontSize: 15,
-    },
-    profileCopy: {
-      flex: 1,
-      gap: 2,
-    },
-    artistName: {
-      color: theme.mode === 'light' ? theme.colors.text : theme.colors.textInverse,
-      fontSize: 15,
-      fontWeight: '800',
-    },
-    artistMeta: {
-      color: theme.colors.textMuted,
-      fontSize: 11,
-      lineHeight: 16,
-    },
-    media: {
-      minHeight: 280,
-      justifyContent: 'flex-end',
-    },
-    mediaOverlay: {
-      padding: 14,
-      backgroundColor: theme.mode === 'light' ? 'rgba(11, 11, 15, 0.04)' : 'rgba(5, 10, 20, 0.22)',
-    },
-    mediaLabel: {
-      color: theme.mode === 'light' ? theme.colors.text : theme.colors.textInverse,
-      fontSize: 11,
-      fontWeight: '700',
-      letterSpacing: 0.4,
-    },
-    actionsRow: {
+    searchRow: {
       flexDirection: 'row',
       alignItems: 'center',
       gap: 10,
-      paddingHorizontal: 14,
-      paddingTop: 12,
-    },
-    actionButton: {
-      width: 44,
-      height: 38,
-      borderRadius: 999,
-      alignItems: 'center',
-      justifyContent: 'center',
-      backgroundColor: theme.mode === 'light' ? 'rgba(122, 92, 255, 0.08)' : 'rgba(255, 255, 255, 0.06)',
+      borderRadius: 14,
       borderWidth: 1,
-      borderColor: theme.mode === 'light' ? 'rgba(122, 92, 255, 0.18)' : theme.colors.border,
+      borderColor: theme.colors.border,
+      backgroundColor: theme.mode === 'light' ? '#ffffff' : 'rgba(255,255,255,0.02)',
+      paddingHorizontal: 11,
+      paddingVertical: 9,
     },
-    actionButtonDisabled: {
-      opacity: 0.62,
-    },
-    reportButton: {
-      marginLeft: 'auto',
-      backgroundColor: 'rgba(142, 75, 69, 0.14)',
-      borderColor: 'rgba(142, 75, 69, 0.38)',
-    },
-    metaRow: {
-      paddingHorizontal: 14,
-      paddingTop: 10,
-    },
-    likes: {
-      color: theme.mode === 'light' ? theme.colors.text : theme.colors.textInverse,
-      fontSize: 12,
-      fontWeight: '800',
-    },
-    caption: {
-      paddingHorizontal: 14,
-      paddingTop: 8,
-      paddingBottom: 10,
+    searchInput: {
+      flex: 1,
       color: theme.mode === 'light' ? theme.colors.text : theme.colors.textInverse,
       fontSize: 13,
-      lineHeight: 19,
-    },
-    tagsRow: {
-      flexDirection: 'row',
-      flexWrap: 'wrap',
-      gap: 8,
-      paddingHorizontal: 14,
-      paddingBottom: 14,
-    },
-    tagPill: {
-      borderRadius: 999,
-      borderWidth: 1,
-      borderColor: theme.mode === 'light' ? 'rgba(122, 92, 255, 0.22)' : 'rgba(122, 92, 255, 0.26)',
-      backgroundColor: theme.mode === 'light' ? 'rgba(122, 92, 255, 0.08)' : 'rgba(122, 92, 255, 0.1)',
-      paddingHorizontal: 10,
-      paddingVertical: 6,
-    },
-    tagText: {
-      color: theme.mode === 'light' ? 'rgba(58, 0, 132, 0.85)' : 'rgba(237, 229, 255, 0.95)',
-      fontSize: 11,
       fontWeight: '700',
     },
-    emptyWrap: {
-      paddingHorizontal: 20,
-      paddingVertical: 22,
+    discoveryRow: {
+      flexDirection: 'row',
+      gap: 6,
+      flexWrap: 'wrap',
+    },
+    discoveryPill: {
+      paddingHorizontal: 11,
+      paddingVertical: 7,
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      backgroundColor: theme.colors.accentSoft,
+    },
+    discoveryPillText: {
+      color: theme.mode === 'light' ? theme.colors.text : theme.colors.textInverse,
+      fontSize: 10,
+      fontWeight: '900',
+    },
+    loadingState: {
+      paddingHorizontal: 16,
+      paddingVertical: 24,
+    },
+    loadingText: {
+      color: theme.colors.textMuted,
+      fontSize: 13,
+      fontWeight: '700',
+    },
+    listContent: {
+      paddingHorizontal: 18,
+      paddingBottom: 120,
+      gap: 10,
+    },
+    card: {
+      borderRadius: 22,
+      backgroundColor: theme.mode === 'light' ? '#ffffff' : 'rgba(255,255,255,0.025)',
+      padding: 12,
+      gap: 10,
+    },
+    cardHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+    },
+    cardHeaderPressable: {
+      flex: 1,
+      minWidth: 0,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+    },
+    cardHeaderCopy: {
+      flex: 1,
+      minWidth: 0,
+      gap: 2,
+    },
+    nameRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+    },
+    menuButton: {
+      width: 32,
+      height: 32,
+      borderRadius: 16,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: theme.mode === 'light' ? 'rgba(11,11,15,0.04)' : 'rgba(255,255,255,0.03)',
+      borderWidth: 0,
+    },
+    artistName: {
+      color: theme.mode === 'light' ? theme.colors.text : theme.colors.textInverse,
+      fontSize: 13,
+      fontWeight: '900',
+      flexShrink: 1,
+    },
+    artistMeta: {
+      color: theme.colors.textMuted,
+      fontSize: 10,
+      fontWeight: '700',
+    },
+    mediaShell: {
+      borderRadius: 18,
+      overflow: 'hidden',
+      backgroundColor: '#08080b',
+      position: 'relative',
+    },
+    imageMediaShell: {
+      aspectRatio: 4 / 5,
+    },
+    reelMediaShell: {
+      aspectRatio: 9 / 16,
+    },
+    media: {
+      width: '100%',
+      height: '100%',
+    },
+    mediaFallback: {
+      flex: 1,
       alignItems: 'center',
       justifyContent: 'center',
       gap: 6,
+    },
+    mediaFallbackText: {
+      color: theme.colors.textInverse,
+      fontSize: 11,
+      fontWeight: '800',
+    },
+    caption: {
+      color: theme.mode === 'light' ? theme.colors.text : theme.colors.textInverse,
+      fontSize: 10,
+      lineHeight: 16,
+      fontWeight: '700',
+      paddingBottom: 2,
+    },
+    tagRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8,
+    },
+    tagPill: {
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      borderRadius: 999,
+      borderWidth: 0,
+      backgroundColor: theme.mode === 'light' ? '#ffffff' : 'rgba(255,255,255,0.03)',
+    },
+    tagText: {
+      color: theme.colors.accent,
+      fontSize: 10,
+      fontWeight: '900',
+    },
+    actionRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 8,
+    },
+    leftActionRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+    },
+    actionIconButton: {
+      width: 34,
+      height: 34,
+      borderRadius: 17,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 0,
+      backgroundColor: theme.mode === 'light' ? '#F3F3F7' : 'rgba(255,255,255,0.035)',
+    },
+    actionIconButtonActive: {
+      borderWidth: 0,
+      backgroundColor: theme.colors.accentSoft,
+    },
+    saveAction: {
+      marginLeft: 'auto',
+    },
+    menuBackdrop: {
+      ...StyleSheet.absoluteFillObject,
+      backgroundColor: 'rgba(0,0,0,0.28)',
+    },
+    menuSheetWrap: {
+      flex: 1,
+      justifyContent: 'flex-start',
+      alignItems: 'flex-end',
+      paddingTop: 116,
+      paddingRight: 18,
+    },
+    menuSheet: {
+      width: 130,
+      borderRadius: 16,
+      borderWidth: 0,
+      backgroundColor: theme.mode === 'light' ? '#ffffff' : '#101117',
+      paddingVertical: 10,
+      paddingHorizontal: 10,
+      gap: 8,
+    },
+    menuSheetTitle: {
+      color: theme.colors.textMuted,
+      fontSize: 10,
+      fontWeight: '800',
+      textTransform: 'uppercase',
+      letterSpacing: 0.4,
+      marginBottom: 2,
+    },
+    menuSheetAction: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      minHeight: 36,
+      borderRadius: 12,
+      paddingHorizontal: 10,
+      backgroundColor: theme.mode === 'light' ? 'rgba(11,11,15,0.03)' : 'rgba(255,255,255,0.03)',
+    },
+    menuSheetActionText: {
+      color: theme.mode === 'light' ? theme.colors.text : theme.colors.textInverse,
+      fontSize: 11,
+      fontWeight: '800',
+    },
+    emptyState: {
+      borderRadius: 20,
+      borderWidth: 0,
+      backgroundColor: theme.mode === 'light' ? '#ffffff' : 'rgba(255,255,255,0.03)',
+      padding: 14,
+      alignItems: 'center',
+      gap: 8,
+      minHeight: 132,
+      justifyContent: 'center',
     },
     emptyTitle: {
       color: theme.mode === 'light' ? theme.colors.text : theme.colors.textInverse,
       fontSize: 14,
       fontWeight: '900',
-      letterSpacing: 0.3,
-      textTransform: 'uppercase',
     },
-    emptySub: {
+    emptyBody: {
       color: theme.colors.textMuted,
       fontSize: 12,
       fontWeight: '700',
       textAlign: 'center',
+      lineHeight: 18,
+    },
+    backdrop: {
+      ...StyleSheet.absoluteFillObject,
+      backgroundColor: 'rgba(0,0,0,0.62)',
+    },
+    sheetWrap: {
+      flex: 1,
+      justifyContent: 'flex-end',
+      paddingHorizontal: 12,
+      paddingBottom: 18,
+    },
+    sheet: {
+      borderRadius: 22,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      backgroundColor: theme.mode === 'light' ? '#ffffff' : '#0f1015',
+      overflow: 'hidden',
+      maxHeight: '78%',
+    },
+    sheetHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: 14,
+      paddingTop: 14,
+      paddingBottom: 10,
+      borderBottomWidth: 1,
+      borderBottomColor: theme.colors.border,
+    },
+    sheetTitle: {
+      color: theme.mode === 'light' ? theme.colors.text : theme.colors.textInverse,
+      fontSize: 15,
+      fontWeight: '900',
+    },
+    iconBtn: {
+      width: 34,
+      height: 34,
+      borderRadius: 17,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      backgroundColor: theme.mode === 'light' ? 'rgba(11,11,15,0.04)' : 'rgba(255,255,255,0.04)',
+    },
+    sheetBody: {
+      padding: 14,
+      gap: 12,
+    },
+    sheetText: {
+      color: theme.colors.textMuted,
+      fontSize: 12,
+      lineHeight: 18,
+      fontWeight: '700',
+    },
+    input: {
+      borderRadius: 16,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      backgroundColor: theme.mode === 'light' ? '#ffffff' : 'rgba(255,255,255,0.03)',
+      paddingHorizontal: 12,
+      paddingVertical: 11,
+      color: theme.mode === 'light' ? theme.colors.text : theme.colors.textInverse,
+      fontSize: 13,
+      fontWeight: '700',
+    },
+    reportInput: {
+      minHeight: 96,
+      textAlignVertical: 'top',
+    },
+    sheetActions: {
+      flexDirection: 'row',
+      gap: 10,
+    },
+    secondaryBtn: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: 14,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      paddingVertical: 12,
+      backgroundColor: theme.mode === 'light' ? 'rgba(11,11,15,0.04)' : 'rgba(255,255,255,0.03)',
+    },
+    secondaryBtnText: {
+      color: theme.mode === 'light' ? theme.colors.text : theme.colors.textInverse,
+      fontSize: 12,
+      fontWeight: '900',
+    },
+    primaryBtn: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: 14,
+      paddingVertical: 12,
+      backgroundColor: theme.colors.accent,
+    },
+    primaryBtnText: {
+      color: theme.colors.textInverse,
+      fontSize: 12,
+      fontWeight: '900',
     },
   });
 

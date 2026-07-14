@@ -1,11 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+import { FlatList, Pressable, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { collection, onSnapshot, query, where, doc } from 'firebase/firestore';
+import { collection, doc, getCountFromServer, getDoc, query, where } from 'firebase/firestore';
 import { auth, db } from '../../../config/firebaseConfig';
 import { useAppTheme } from '../../../theme/useAppTheme';
 import type { AppTheme } from '../../../theme/theme';
-import type { BookingStatus, DealerRequestStatus } from '../../../types/app';
+import type { DealerRequestStatus } from '../../../types/app';
 import SocioFeedPanel from './SocioFeedPanel';
 
 type ArtistHomePanelProps = {
@@ -51,56 +51,33 @@ const ArtistHomePanel = ({ header, onOpenPost, onOpenBooking, onOpenSetting }: A
 
   useEffect(() => {
     if (!uid) return;
-
-    const bookingsQ = query(collection(db, 'bookings'), where('artistUid', '==', uid));
-    const postsQ = query(collection(db, 'posts'), where('artistUid', '==', uid), where('status', '==', 'active'));
-
-    const unsubBookings = onSnapshot(
-      bookingsQ,
-      (snap) => {
+    let active = true;
+    (async () => {
+      try {
         const now = todayISO();
-        let pending = 0;
-        let today = 0;
+        const [pendingSnap, todaySnap, postSnap, userSnap] = await Promise.all([
+          getCountFromServer(query(collection(db, 'bookings'), where('artistUid', '==', uid), where('status', '==', 'pending_artist_approval'))),
+          getCountFromServer(query(collection(db, 'bookings'), where('artistUid', '==', uid), where('dateISO', '==', now), where('status', 'in', ['confirmed', 'artist_approved_payment_pending', 'pending_artist_approval']))),
+          getCountFromServer(query(collection(db, 'posts'), where('artistUid', '==', uid), where('status', '==', 'active'))),
+          getDoc(doc(db, 'users', uid)),
+        ]);
 
-        snap.docs.forEach((row) => {
-          const d = row.data() as any;
-          const status = String(d.status ?? '') as BookingStatus;
-          const dateISO = String(d.dateISO ?? '');
-
-          if (status === 'pending_artist_approval') pending += 1;
-          if (dateISO === now && (status === 'confirmed' || status === 'artist_approved_payment_pending' || status === 'pending_artist_approval')) {
-            today += 1;
-          }
-        });
-
-        setPendingCount(pending);
-        setTodayCount(today);
-      },
-      () => {
+        if (!active) return;
+        setPendingCount(pendingSnap.data().count);
+        setTodayCount(todaySnap.data().count);
+        setPostCount(postSnap.data().count);
+        setDealerStatus((userSnap.data()?.dealerRequestStatus ?? 'unsubmitted') as DealerRequestStatus);
+      } catch {
+        if (!active) return;
         setPendingCount(0);
         setTodayCount(0);
-      },
-    );
-
-    const unsubPosts = onSnapshot(
-      postsQ,
-      (snap) => setPostCount(snap.docs.length),
-      () => setPostCount(0),
-    );
-
-    const unsubUser = onSnapshot(
-      doc(db, 'users', uid),
-      (snap) => {
-        const status = (snap.data()?.dealerRequestStatus ?? 'unsubmitted') as DealerRequestStatus;
-        setDealerStatus(status);
-      },
-      () => setDealerStatus('unsubmitted'),
-    );
+        setPostCount(0);
+        setDealerStatus('unsubmitted');
+      }
+    })();
 
     return () => {
-      unsubBookings();
-      unsubPosts();
-      unsubUser();
+      active = false;
     };
   }, [uid]);
 
@@ -130,6 +107,7 @@ const ArtistHomePanel = ({ header, onOpenPost, onOpenBooking, onOpenSetting }: A
   if (viewMode === 'feed') {
     return (
       <SocioFeedPanel
+        hideSearchBar
         header={
           <View style={styles.feedHeaderWrap}>
             {header ? <View style={styles.externalHeader}>{header}</View> : null}
@@ -156,7 +134,7 @@ const ArtistHomePanel = ({ header, onOpenPost, onOpenBooking, onOpenSetting }: A
             <Text style={styles.sectionBadge}>Artist</Text>
           </View>
 
-          <Text style={styles.sectionSub}>Track booking pipeline, posting momentum, and dealer onboarding status.</Text>
+          <Text style={styles.sectionSub}>Track bookings, posts, and profile progress.</Text>
 
           <View style={styles.quickRow}>
             <Pressable style={styles.quickBtn} onPress={() => setViewMode('feed')}>
@@ -186,7 +164,20 @@ const ArtistHomePanel = ({ header, onOpenPost, onOpenBooking, onOpenSetting }: A
           <Text style={styles.kpiLabel}>{item.label}</Text>
         </View>
       )}
-      ListEmptyComponent={<Text style={styles.empty}>No data yet.</Text>}
+      ListEmptyComponent={
+        <View style={styles.emptyWrap}>
+          <Text style={styles.emptyTitle}>Nothing to show yet</Text>
+          <Text style={styles.empty}>Post your first piece, check booking requests, or update profile details to populate this dashboard.</Text>
+          <View style={styles.emptyActions}>
+            <TouchableOpacity activeOpacity={0.9} style={styles.emptyBtn} onPress={onOpenPost}>
+              <Text style={styles.emptyBtnText}>Create post</Text>
+            </TouchableOpacity>
+            <TouchableOpacity activeOpacity={0.9} style={[styles.emptyBtn, styles.emptyBtnSecondary]} onPress={onOpenBooking}>
+              <Text style={styles.emptyBtnText}>Check bookings</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      }
       showsVerticalScrollIndicator={false}
     />
   );
@@ -201,7 +192,7 @@ const createStyles = (theme: AppTheme) =>
       gap: 12,
     },
     headWrap: {
-      gap: 12,
+      gap: 10,
       marginBottom: 2,
     },
     feedHeaderWrap: {
@@ -246,7 +237,7 @@ const createStyles = (theme: AppTheme) =>
     },
     sectionTitle: {
       color: theme.mode === 'light' ? theme.colors.text : theme.colors.textInverse,
-      fontSize: 20,
+      fontSize: 18,
       fontFamily: theme.fonts.display,
     },
     sectionBadge: {
@@ -262,8 +253,8 @@ const createStyles = (theme: AppTheme) =>
     },
     sectionSub: {
       color: theme.colors.textMuted,
-      fontSize: 12,
-      lineHeight: 18,
+      fontSize: 11,
+      lineHeight: 16,
       fontWeight: '700',
     },
     quickRow: {
@@ -272,7 +263,7 @@ const createStyles = (theme: AppTheme) =>
     },
     quickBtn: {
       flex: 1,
-      minHeight: 58,
+      minHeight: 52,
       borderRadius: 16,
       borderWidth: 1,
       borderColor: theme.colors.border,
@@ -285,12 +276,12 @@ const createStyles = (theme: AppTheme) =>
     },
     quickText: {
       color: theme.mode === 'light' ? theme.colors.text : theme.colors.textInverse,
-      fontSize: 11,
+      fontSize: 10,
       fontWeight: '800',
       textAlign: 'center',
     },
     fullBtn: {
-      minHeight: 48,
+      minHeight: 44,
       borderRadius: 14,
       borderWidth: 1,
       borderColor: theme.colors.border,
@@ -303,7 +294,7 @@ const createStyles = (theme: AppTheme) =>
     },
     fullBtnText: {
       color: theme.mode === 'light' ? theme.colors.text : theme.colors.textInverse,
-      fontSize: 12,
+      fontSize: 11,
       fontWeight: '800',
     },
     kpiRow: {
@@ -315,26 +306,68 @@ const createStyles = (theme: AppTheme) =>
       borderWidth: 1,
       borderColor: theme.colors.border,
       backgroundColor: theme.colors.surface,
-      paddingVertical: 16,
-      paddingHorizontal: 12,
-      minHeight: 98,
+      paddingVertical: 14,
+      paddingHorizontal: 11,
+      minHeight: 90,
       justifyContent: 'center',
-      gap: 8,
+      gap: 6,
     },
     kpiValue: {
       color: theme.mode === 'light' ? theme.colors.text : theme.colors.textInverse,
-      fontSize: 22,
+      fontSize: 20,
       fontWeight: '900',
     },
     kpiLabel: {
       color: theme.colors.textMuted,
-      fontSize: 12,
+      fontSize: 11,
       fontWeight: '700',
+    },
+    emptyWrap: {
+      borderRadius: 20,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      backgroundColor: theme.colors.surface,
+      padding: 18,
+      gap: 10,
+      alignItems: 'center',
+    },
+    emptyTitle: {
+      color: theme.mode === 'light' ? theme.colors.text : theme.colors.textInverse,
+      fontSize: 16,
+      fontWeight: '900',
     },
     empty: {
       color: theme.colors.textMuted,
       textAlign: 'center',
-      paddingVertical: 18,
+      lineHeight: 18,
+      fontSize: 12,
+      fontWeight: '700',
+    },
+    emptyActions: {
+      flexDirection: 'row',
+      gap: 10,
+      flexWrap: 'wrap',
+      justifyContent: 'center',
+    },
+    emptyBtn: {
+      minHeight: 42,
+      borderRadius: 14,
+      borderWidth: 1,
+      borderColor: theme.mode === 'light' ? 'rgba(122, 92, 255, 0.24)' : 'rgba(122, 92, 255, 0.28)',
+      backgroundColor: theme.colors.accentSoft,
+      paddingHorizontal: 14,
+      paddingVertical: 10,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    emptyBtnSecondary: {
+      backgroundColor: theme.mode === 'light' ? 'rgba(11, 11, 15, 0.04)' : 'rgba(255, 255, 255, 0.06)',
+    },
+    emptyBtnText: {
+      color: theme.mode === 'light' ? theme.colors.text : theme.colors.textInverse,
+      fontSize: 12,
+      fontWeight: '900',
+      letterSpacing: 0.4,
     },
   });
 

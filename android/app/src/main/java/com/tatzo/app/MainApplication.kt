@@ -1,4 +1,4 @@
-package com.sunitha.tatzo
+package com.tatzo.app
 
 import android.app.Application
 import android.content.res.Configuration

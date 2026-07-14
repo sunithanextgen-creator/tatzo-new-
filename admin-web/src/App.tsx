@@ -5,6 +5,8 @@ import AdminDashboard from './pages/AdminDashboard';
 import AdminLogin from './pages/AdminLogin';
 import PendingApplications from './pages/PendingApplications';
 import VerificationDetail from './pages/VerificationDetail';
+import ExistingArtistAccess from './pages/ExistingArtistAccess';
+import EarlyAccessLeads from './pages/EarlyAccessLeads';
 
 export default function App() {
   const [loading, setLoading] = useState(true);
@@ -60,12 +62,20 @@ export default function App() {
         <NavLink to="/verifications" className={({ isActive }) => `nav-chip ${isActive ? 'nav-chip-active' : ''}`}>
           Verification Queue
         </NavLink>
+        <NavLink to="/artist-access" className={({ isActive }) => `nav-chip ${isActive ? 'nav-chip-active' : ''}`}>
+          Existing Artist Access
+        </NavLink>
+        <NavLink to="/early-access-leads" className={({ isActive }) => `nav-chip ${isActive ? 'nav-chip-active' : ''}`}>
+          Early Access Leads
+        </NavLink>
       </nav>
 
       <Routes>
         <Route path="/" element={<AdminDashboard />} />
         <Route path="/verifications" element={<PendingApplications />} />
         <Route path="/verifications/:uid" element={<VerificationDetail />} />
+        <Route path="/artist-access" element={<ExistingArtistAccess />} />
+        <Route path="/early-access-leads" element={<EarlyAccessLeads />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </div>

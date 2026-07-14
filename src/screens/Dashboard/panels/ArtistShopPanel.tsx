@@ -1,18 +1,19 @@
 import React, { useMemo } from 'react';
-import { Alert, FlatList, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import { FlatList, ImageBackground, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { useAppTheme } from '../../../theme/useAppTheme';
 import type { AppTheme } from '../../../theme/theme';
-import { signOutAndCleanup } from '../../../services/signout';
 
 type ArtistShopPanelProps = {
   header?: React.ReactNode;
   onOpenPost?: () => void;
 };
 
+const SHOP_COMING_SOON_BG = require('../../../../assets/shop-coming-soon-bg.png');
+
 const ArtistShopPanel = ({ header }: ArtistShopPanelProps) => {
   const { theme } = useAppTheme();
-  const styles = useMemo(() => createStyles(theme), [theme]);
+  const { height } = useWindowDimensions();
+  const styles = useMemo(() => createStyles(theme, height), [theme, height]);
 
   return (
     <FlatList
@@ -23,27 +24,21 @@ const ArtistShopPanel = ({ header }: ArtistShopPanelProps) => {
       renderItem={() => (
         <View style={styles.stack}>
           <Text style={styles.title}>Shop</Text>
-          <Text style={styles.sub}>B2B catalog and supplies for artists. Subscription controls are in Profile.</Text>
 
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>Dealer Catalog</Text>
-            <Text style={styles.line}>Needles and cartridges</Text>
-            <Text style={styles.line}>Studio inks and aftercare</Text>
-            <Text style={styles.line}>Stencil and setup kits</Text>
-            <Text style={styles.hint}>Product ordering flow can be wired next in this tab.</Text>
-          </View>
+          <ImageBackground source={SHOP_COMING_SOON_BG} style={styles.poster} imageStyle={styles.posterImage} resizeMode="contain">
+            <View style={styles.posterOverlay} />
+            <View style={styles.posterBottomScrim} />
+            <View style={styles.posterContent}>
+              <Text style={styles.posterKicker}>Tatzo Shop</Text>
+              <Text style={styles.posterTitle}>Coming Soon</Text>
+              <Text style={styles.posterSub}>Get ready for the massive market place.</Text>
+              <View style={styles.posterBadge}>
+                <Text style={styles.posterBadgeText}>Creative marketplace loading</Text>
+              </View>
+            </View>
+          </ImageBackground>
 
-          <TouchableOpacity
-            style={styles.signOutBtn}
-            onPress={() => {
-              Alert.alert('Tatzo', 'Sign out?', [
-                { text: 'Cancel', style: 'cancel' },
-                { text: 'Sign out', style: 'destructive', onPress: () => void signOutAndCleanup({ deleteProfile: false }) },
-              ]);
-            }}
-          >
-            <Text style={styles.signOutText}>Sign out</Text>
-          </TouchableOpacity>
+          <Text style={styles.sub}>Creative supplies and artist essentials are being prepared.</Text>
         </View>
       )}
       showsVerticalScrollIndicator={false}
@@ -51,54 +46,101 @@ const ArtistShopPanel = ({ header }: ArtistShopPanelProps) => {
   );
 };
 
-const createStyles = (theme: AppTheme) =>
+const createStyles = (theme: AppTheme, screenHeight: number) =>
   StyleSheet.create({
     wrap: {
       paddingHorizontal: 18,
       paddingTop: 10,
-      paddingBottom: 120,
+      paddingBottom: 102,
+      flexGrow: 1,
     },
     externalHeader: {
-      marginBottom: 12,
+      marginBottom: 10,
     },
     stack: {
-      gap: 12,
+      gap: 10,
+      minHeight: Math.max(400, screenHeight - 240),
     },
     title: {
       color: theme.mode === 'light' ? theme.colors.text : theme.colors.textInverse,
-      fontSize: 20,
+      fontSize: theme.typography.title,
       fontFamily: theme.fonts.display,
     },
     sub: {
       color: theme.colors.textMuted,
-      fontSize: 12,
+      fontSize: theme.typography.body,
       lineHeight: 18,
       fontWeight: '700',
-      marginTop: -2,
+      textAlign: 'center',
     },
-    card: {
-      borderRadius: 24,
+    poster: {
+      width: '100%',
+      aspectRatio: 1.5,
+      borderRadius: 28,
       borderWidth: 1,
       borderColor: theme.colors.border,
-      backgroundColor: theme.colors.surface,
-      padding: 14,
-      gap: 8,
+      overflow: 'hidden',
+      justifyContent: 'flex-end',
+      alignItems: 'stretch',
+      backgroundColor: '#050505',
     },
-    cardTitle: {
-      color: theme.mode === 'light' ? theme.colors.text : theme.colors.textInverse,
-      fontSize: 13,
+    posterImage: {
+      borderRadius: 28,
+      opacity: 1,
+      resizeMode: 'cover',
+    },
+    posterOverlay: {
+      ...StyleSheet.absoluteFillObject,
+      backgroundColor: 'rgba(5, 5, 5, 0.04)',
+    },
+    posterBottomScrim: {
+      position: 'absolute',
+      left: 0,
+      right: 0,
+      bottom: 0,
+      height: 150,
+      backgroundColor: 'rgba(5, 5, 5, 0.42)',
+    },
+    posterContent: {
+      paddingHorizontal: 16,
+      paddingVertical: 16,
+      gap: 5,
+    },
+    posterKicker: {
+      color: theme.colors.accentStrong,
+      fontSize: theme.typography.caption,
+      fontWeight: '900',
+      letterSpacing: 1.1,
+      textTransform: 'uppercase',
+    },
+    posterTitle: {
+      color: '#ffffff',
+      fontSize: theme.typography.title + 4,
+      lineHeight: theme.typography.title + 8,
       fontWeight: '900',
     },
-    line: {
-      color: theme.colors.textMuted,
-      fontSize: 12,
-      fontWeight: '700',
+    posterSub: {
+      color: 'rgba(255,255,255,0.96)',
+      fontSize: theme.typography.body - 1,
+      lineHeight: 17 * theme.fontScale,
+      fontWeight: '800',
+      maxWidth: 240,
     },
-    hint: {
-      color: theme.mode === 'light' ? '#2f4c7b' : '#b8d5ff',
-      fontSize: 12,
-      fontWeight: '700',
+    posterBadge: {
       marginTop: 4,
+      alignSelf: 'flex-start',
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: 'rgba(255,255,255,0.2)',
+      backgroundColor: 'rgba(14, 9, 24, 0.62)',
+      paddingHorizontal: 11,
+      paddingVertical: 7,
+    },
+    posterBadgeText: {
+      color: '#ffffff',
+      fontSize: theme.typography.caption,
+      fontWeight: '800',
+      letterSpacing: 0.3,
     },
     signOutBtn: {
       borderRadius: 16,

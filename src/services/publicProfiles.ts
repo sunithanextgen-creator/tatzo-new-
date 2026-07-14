@@ -1,6 +1,7 @@
-﻿import { doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore';
+import { doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore';
 import { db } from '../config/firebaseConfig';
 import type { UserProfile } from '../types/app';
+import { getArtistPublicVisibility, getArtistSettingsFromProfile } from './artistSettings';
 
 const safeTrim = (v: any) => String(v ?? '').trim();
 
@@ -21,12 +22,14 @@ export const ensurePublicRoleProfile = async (profile: UserProfile) => {
   // Pull non-sensitive business label from the verification doc if available.
   let shopName = '';
   let portfolioLink = '';
+  let certificateReviewStatus = safeTrim(profile.certificateReviewStatus);
   try {
     const ver = await getDoc(doc(db, 'verifications', uid));
     if (ver.exists()) {
       const d = ver.data() as any;
       shopName = safeTrim(d.shopName);
       portfolioLink = safeTrim(d.portfolioLink);
+      certificateReviewStatus = certificateReviewStatus || safeTrim(d.certificateReviewStatus);
     }
   } catch {
     // ignore
@@ -37,7 +40,9 @@ export const ensurePublicRoleProfile = async (profile: UserProfile) => {
     role,
     artistName: safeTrim(profile.artistName) || safeTrim(profile.displayName),
     displayName: safeTrim(profile.displayName),
-    studioName: shopName || safeTrim(profile.displayName),
+    studioName: safeTrim(profile.studioName) || shopName || safeTrim(profile.displayName),
+    shopAddressLine: safeTrim(profile.shopAddressLine),
+    artistSinceYear: Number(profile.artistSinceYear ?? 0) || null,
     locationCity: safeTrim(profile.locationCity),
     locationArea: safeTrim(profile.locationArea),
     location: [safeTrim(profile.locationArea), safeTrim(profile.locationCity)].filter(Boolean).join(', '),
@@ -48,8 +53,15 @@ export const ensurePublicRoleProfile = async (profile: UserProfile) => {
     styles: Array.isArray(profile.styles) ? profile.styles.map((tag) => safeTrim(tag)).filter(Boolean) : [],
     tags: Array.isArray(profile.styles) ? profile.styles.map((tag) => safeTrim(tag)).filter(Boolean) : [],
     profileImageUrl: safeTrim(profile.profileImageUrl),
+    profileImageMeta: profile.profileImageMeta ?? null,
+    coverImageUrl: safeTrim(profile.coverImageUrl),
+    coverImageMeta: profile.coverImageMeta ?? null,
+    certificateReviewStatus: certificateReviewStatus || 'pending',
     verificationStatus: 'approved',
-    isVisible: true,
+    artistVisible: true,
+    bookingVisible: getArtistSettingsFromProfile(profile).privacy.bookingVisibility !== false,
+    postingEnabled: profile.postingEnabled === true,
+    isVisible: getArtistPublicVisibility(getArtistSettingsFromProfile(profile)),
     portfolioLink,
     verifiedPro: role === 'artist',
     authorizedSeller: role === 'dealer',

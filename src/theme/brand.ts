@@ -1,11 +1,13 @@
 export const brand = {
-  deepInkBlack: '#0B0B0F',
-  electricNeonBlue: '#00E5FF',
-  cyberPurple: '#7A5CFF',
-  cleanWhite: '#F5F7FA',
-  metallicSilver: '#C7CCD6',
-  inkNavy: '#07111f',
-  inkShadow: '#050A14',
+  deepInkBlack: '#050505',
+  electricNeonBlue: '#00D4FF',
+  cyberPurple: '#A855F7',
+  neonPink: '#C084FC',
+  neonBlueGlow: '#7DD3FC',
+  cleanWhite: '#FFFFFF',
+  metallicSilver: '#A1A1AA',
+  inkNavy: '#0D0D0D',
+  inkShadow: '#181818',
 } as const;
 
 export type Brand = typeof brand;

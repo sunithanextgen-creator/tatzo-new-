@@ -11,14 +11,19 @@ export const isUserRole = (value: unknown): value is UserRole => {
 };
 
 export const isVerificationStatus = (value: unknown): value is VerificationStatus => {
-  return value === 'unsubmitted' || value === 'pending' || value === 'approved' || value === 'rejected';
+  return (
+    value === 'unsubmitted' ||
+    value === 'pending' ||
+    value === 'pending_verification' ||
+    value === 'needs_more_samples' ||
+    value === 'approved' ||
+    value === 'rejected'
+  );
 };
 
-// Artist/Dealer dashboards unlock only after admin approval.
+// Route by the saved role. Public visibility is controlled separately.
 export const resolveEffectiveRole = (profile: Pick<UserProfile, 'role' | 'verificationStatus'>): UserRole => {
-  const role = isUserRole(profile.role) ? profile.role : 'user';
-  if (role === 'user') return 'user';
-  return profile.verificationStatus === 'approved' ? role : 'user';
+  return isUserRole(profile.role) ? profile.role : 'user';
 };
 
 // Session-level readiness: we only need a valid role + setupComplete.

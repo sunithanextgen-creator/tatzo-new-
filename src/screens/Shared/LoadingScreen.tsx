@@ -1,10 +1,12 @@
 import React, { useMemo } from 'react';
-import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { createResponsiveShadow } from '../../utils/responsiveShadow';
 import { useAppTheme } from '../../theme/useAppTheme';
 import type { AppTheme } from '../../theme/theme';
+import SkeletonBlock from '../../components/ui/SkeletonBlock';
 
 type LoadingScreenProps = {
   title: string;
@@ -20,10 +22,16 @@ const LoadingScreen = ({ title, message }: LoadingScreenProps) => {
       <LinearGradient colors={theme.gradients.canvas} style={styles.container}>
         <View style={styles.halo} />
         <View style={styles.card}>
+          <LinearGradient colors={theme.gradients.accent} style={styles.skullMark}>
+            <Ionicons name="skull-outline" size={30} color="#0B0B0F" />
+          </LinearGradient>
           <Text style={styles.eyebrow}>Tatzo System</Text>
           <Text style={styles.title}>{title}</Text>
           <Text style={styles.message}>{message}</Text>
-          <ActivityIndicator size="small" color={theme.colors.accentStrong} />
+          <View style={styles.loadingSkeleton}>
+            <SkeletonBlock width="78%" height={12} />
+            <SkeletonBlock width="56%" height={12} />
+          </View>
         </View>
       </LinearGradient>
     </SafeAreaView>
@@ -71,6 +79,16 @@ const createStyles = (theme: AppTheme) =>
       }),
       gap: 10,
     },
+    skullMark: {
+      width: 64,
+      height: 64,
+      borderRadius: 24,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginBottom: 4,
+      borderWidth: 1,
+      borderColor: theme.mode === 'light' ? 'rgba(122, 92, 255, 0.22)' : 'rgba(255, 255, 255, 0.16)',
+    },
     eyebrow: {
       color: theme.colors.accentStrong,
       fontSize: 13,
@@ -89,6 +107,10 @@ const createStyles = (theme: AppTheme) =>
       fontSize: 15,
       lineHeight: 22,
       marginBottom: 6,
+    },
+    loadingSkeleton: {
+      gap: 8,
+      marginTop: 2,
     },
   });
 

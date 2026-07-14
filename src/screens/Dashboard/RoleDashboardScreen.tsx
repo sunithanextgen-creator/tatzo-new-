@@ -1,5 +1,6 @@
-﻿import React, { useMemo, useState } from 'react';
-import { Alert, SafeAreaView, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import React, { useMemo, useState } from 'react';
+import { Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { auth } from '../../config/firebaseConfig';
 import { signOutAndCleanup } from '../../services/signout';
@@ -116,9 +117,11 @@ const RoleDashboardScreen = ({ role }: RoleDashboardScreenProps) => {
               <Text style={styles.eyebrow}>{content.eyebrow}</Text>
               <Text style={styles.brand}>TATZO</Text>
             </View>
-            <TouchableOpacity activeOpacity={0.9} onPress={handleSignOut} style={styles.signOutButton}>
-              <Text style={styles.signOutText}>{isSigningOut ? 'Signing out...' : 'Sign out'}</Text>
-            </TouchableOpacity>
+            {role !== 'dealer' ? (
+              <TouchableOpacity activeOpacity={0.9} onPress={handleSignOut} style={styles.signOutButton}>
+                <Text style={styles.signOutText}>{isSigningOut ? 'Signing out...' : 'Sign out'}</Text>
+              </TouchableOpacity>
+            ) : null}
           </View>
 
           <LinearGradient colors={theme.gradients.dark} style={styles.heroCard}>
@@ -313,5 +316,7 @@ const createStyles = (theme: AppTheme) =>
   });
 
 export default RoleDashboardScreen;
+
+
 
 

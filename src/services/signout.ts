@@ -1,4 +1,4 @@
-﻿import { signOut } from 'firebase/auth';
+import { signOut } from 'firebase/auth';
 import {
   collection,
   deleteDoc,
@@ -27,6 +27,11 @@ export const signOutAndCleanup = async (options: SignOutCleanupOptions = {}) => 
   } = options;
 
   const user = auth.currentUser;
+
+  if (user && !deleteProfile) {
+    await signOut(auth);
+    return;
+  }
 
   if (user && deleteProfile) {
     try {

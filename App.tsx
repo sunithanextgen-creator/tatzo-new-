@@ -1,4 +1,5 @@
-﻿import React from 'react';
+import React from 'react';
+import { useEffect } from 'react';
 import { Platform, StyleSheet, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -6,6 +7,8 @@ import AppNavigator from './src/navigation/AppNavigator';
 import { ThemeProvider } from './src/theme/ThemeProvider';
 import { useAppTheme } from './src/theme/useAppTheme';
 import DevErrorBoundary from './src/components/debug/DevErrorBoundary';
+import { ANALYTICS_EVENTS, initializeAnalytics, trackAnalyticsEvent } from './src/services/analytics/analytics';
+import { initializeCrashlytics } from './src/services/crashlytics';
 
 const AppFrame = () => {
   const { theme } = useAppTheme();
@@ -28,6 +31,11 @@ const AppFrame = () => {
 };
 
 export default function App() {
+  useEffect(() => {
+    void initializeCrashlytics();
+    void initializeAnalytics().then(() => trackAnalyticsEvent(ANALYTICS_EVENTS.APP_OPEN, { platform: Platform.OS }));
+  }, []);
+
   return (
     <ThemeProvider>
       {__DEV__ ? (

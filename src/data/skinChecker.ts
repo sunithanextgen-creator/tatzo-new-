@@ -121,10 +121,11 @@ export const evaluateSkinChecker = (answers: Record<string, string>): {
   const flag: SkinCheckerFlag = status === 'safe' ? 'GREEN' : status === 'warning' ? 'YELLOW' : 'RED';
   const notes =
     status === 'safe'
-      ? 'No major risks detected. Proceed with standard care.'
+      ? 'Low-risk answers detected. This is not medical clearance; the artist will still review your skin-check answers before quoting.'
       : status === 'warning'
-        ? 'Mild-to-moderate risk detected. Review precautions before proceeding.'
-        : 'High risk detected. Strongly advise dermatologist review before tattooing.';
+        ? 'Some caution signs were detected. Please review precautions and let the artist decide whether to proceed.'
+        : 'High-risk answers detected. Please consider dermatologist review before tattooing; the artist may reject this request for safety.';
 
   return { flag, score, criticalHit, status, notes };
 };
+

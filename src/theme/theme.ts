@@ -2,6 +2,8 @@ import { brand } from './brand';
 import { Platform } from 'react-native';
 
 export type ThemeMode = 'dark' | 'light';
+export type ThemePreference = ThemeMode | 'system';
+export type FontSizeMode = 'small' | 'medium' | 'large';
 
 export type AppTheme = {
   mode: ThemeMode;
@@ -46,76 +48,104 @@ export type AppTheme = {
     display: string;
     body: string;
   };
+  fontScale: number;
+  typography: {
+    caption: number;
+    body: number;
+    bodyLg: number;
+    title: number;
+    heading: number;
+    display: number;
+  };
 };
 
-export const createTheme = (mode: ThemeMode): AppTheme => {
+const getFontScale = (fontSizeMode: FontSizeMode) => {
+  if (fontSizeMode === 'small') return 0.92;
+  if (fontSizeMode === 'large') return 1.08;
+  return 1;
+};
+
+export const createTheme = (mode: ThemeMode, fontSizeMode: FontSizeMode = 'medium'): AppTheme => {
   // Best-effort Arial. Android devices may fall back to the default sans font if Arial isn't available.
   const arial = Platform.OS === 'android' ? 'sans-serif' : 'Arial';
+  const fontScale = getFontScale(fontSizeMode);
+  const typography = {
+    caption: Math.round(11 * fontScale),
+    body: Math.round(13 * fontScale),
+    bodyLg: Math.round(15 * fontScale),
+    title: Math.round(20 * fontScale),
+    heading: Math.round(28 * fontScale),
+    display: Math.round(34 * fontScale),
+  };
 
   if (mode === 'light') {
     return {
       mode,
       colors: {
         background: brand.cleanWhite,
-        backgroundAlt: '#EEF2F7',
-        surface: 'rgba(255, 255, 255, 0.92)',
-        surfaceMuted: 'rgba(255, 255, 255, 0.8)',
+        backgroundAlt: '#F6F3FF',
+        surface: '#FBFBFE',
+        surfaceMuted: 'rgba(255, 255, 255, 0.92)',
         surfaceStrong: '#FFFFFF',
-        border: 'rgba(11, 11, 15, 0.12)',
-        borderStrong: 'rgba(11, 11, 15, 0.22)',
-        text: '#0B0B0F',
-        textMuted: 'rgba(11, 11, 15, 0.62)',
+        border: 'rgba(168, 85, 247, 0.14)',
+        borderStrong: 'rgba(168, 85, 247, 0.3)',
+        text: '#111827',
+        textMuted: '#6B7280',
         textInverse: brand.cleanWhite,
-        accent: brand.cyberPurple,
-        accentStrong: brand.electricNeonBlue,
-        accentSoft: 'rgba(122, 92, 255, 0.12)',
-        overlay: 'rgba(11, 11, 15, 0.06)',
-        shadow: 'rgba(5, 10, 20, 0.22)',
+        accent: '#A855F7',
+        accentStrong: '#C084FC',
+        accentSoft: 'rgba(168, 85, 247, 0.09)',
+        overlay: 'rgba(17, 24, 39, 0.05)',
+        shadow: 'rgba(168, 85, 247, 0.16)',
       },
       gradients: {
-        canvas: [brand.cleanWhite, '#EEF2F7', '#E7EDF7'],
-        accent: [brand.electricNeonBlue, brand.cyberPurple, brand.electricNeonBlue],
-        dark: ['#FFFFFF', '#EEF2F7'],
-        glow: ['rgba(0, 229, 255, 0.14)', 'rgba(122, 92, 255, 0)'],
+        canvas: ['#FFFFFF', '#F6F3FF', '#FFFFFF'],
+        accent: ['#A855F7', '#C084FC', '#00D4FF'],
+        dark: ['#FFFFFF', '#F6F3FF'],
+        glow: ['rgba(168, 85, 247, 0.18)', 'rgba(0, 212, 255, 0.05)'],
       },
       radius: { sm: 14, md: 20, lg: 28, pill: 999 },
       spacing: { xs: 8, sm: 12, md: 16, lg: 24, xl: 32, xxl: 40 },
       fonts: { display: arial, body: arial },
+      fontScale,
+      typography,
     };
   }
 
   return {
     mode,
-    colors: {
-      background: brand.deepInkBlack,
-      backgroundAlt: brand.inkShadow,
-      surface: 'rgba(11, 11, 15, 0.86)',
-      surfaceMuted: 'rgba(11, 11, 15, 0.72)',
-      surfaceStrong: brand.inkShadow,
-      border: 'rgba(199, 204, 214, 0.16)',
-      borderStrong: 'rgba(199, 204, 214, 0.34)',
-      text: brand.cleanWhite,
-      textMuted: 'rgba(245, 247, 250, 0.68)',
-      textInverse: brand.cleanWhite,
-      accent: brand.cyberPurple,
-      accentStrong: brand.electricNeonBlue,
-      accentSoft: 'rgba(122, 92, 255, 0.14)',
-      overlay: 'rgba(7, 17, 31, 0.28)',
-      shadow: brand.inkShadow,
-    },
-    gradients: {
-      canvas: [brand.deepInkBlack, brand.inkShadow, brand.inkNavy],
-      accent: [brand.electricNeonBlue, brand.cyberPurple, brand.electricNeonBlue],
-      dark: [brand.deepInkBlack, brand.inkShadow],
-      glow: ['rgba(0, 229, 255, 0.16)', 'rgba(122, 92, 255, 0)'],
-    },
+      colors: {
+        background: brand.deepInkBlack,
+        backgroundAlt: '#0B0B10',
+        surface: '#121212',
+        surfaceMuted: 'rgba(18, 18, 18, 0.95)',
+        surfaceStrong: '#181818',
+        border: 'rgba(0, 212, 255, 0.18)',
+        borderStrong: 'rgba(0, 212, 255, 0.3)',
+        text: brand.cleanWhite,
+        textMuted: '#A1A1AA',
+        textInverse: brand.cleanWhite,
+        accent: '#00D4FF',
+        accentStrong: '#7DD3FC',
+        accentSoft: 'rgba(0, 212, 255, 0.12)',
+        overlay: 'rgba(5, 5, 10, 0.42)',
+        shadow: 'rgba(0, 212, 255, 0.22)',
+      },
+      gradients: {
+        canvas: ['#050505', '#0B0B10', '#050505'],
+        accent: ['#0EA5E9', '#00D4FF', '#A855F7'],
+        dark: ['#050505', '#0B0B10'],
+        glow: ['rgba(0, 212, 255, 0.22)', 'rgba(168, 85, 247, 0.06)'],
+      },
     radius: { sm: 14, md: 20, lg: 28, pill: 999 },
     spacing: { xs: 8, sm: 12, md: 16, lg: 24, xl: 32, xxl: 40 },
     fonts: { display: arial, body: arial },
+    fontScale,
+    typography,
   };
 };
 
 export const themes = {
-  dark: createTheme('dark'),
-  light: createTheme('light'),
+  dark: createTheme('dark', 'medium'),
+  light: createTheme('light', 'medium'),
 } as const;

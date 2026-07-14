@@ -9,10 +9,15 @@ export const ARTIST_SUBSCRIPTION_BASE_RUPEES = 499;
 export const ARTIST_SUBSCRIPTION_GST_RATE = 0.18;
 export const ARTIST_SUBSCRIPTION_GST_RUPEES = Number((ARTIST_SUBSCRIPTION_BASE_RUPEES * ARTIST_SUBSCRIPTION_GST_RATE).toFixed(2));
 export const ARTIST_SUBSCRIPTION_AMOUNT_RUPEES = Number((ARTIST_SUBSCRIPTION_BASE_RUPEES + ARTIST_SUBSCRIPTION_GST_RUPEES).toFixed(2));
+export const ARTIST_SUBSCRIPTION_DURATION_MONTHS = 6;
+export const ARTIST_SUBSCRIPTION_AMOUNT_PAISE = Math.round(ARTIST_SUBSCRIPTION_AMOUNT_RUPEES * 100);
 export const ARTIST_SUBSCRIPTION_OFFER_LABEL =
-  `Launch Discount: Regular Rs.${ARTIST_SUBSCRIPTION_REGULAR_RUPEES}, now Rs.${ARTIST_SUBSCRIPTION_BASE_RUPEES} + 18% GST (Rs.${ARTIST_SUBSCRIPTION_GST_RUPEES}) = Rs.${ARTIST_SUBSCRIPTION_AMOUNT_RUPEES}`;
+  `Tatzo Pro Launch Offer: Rs.${ARTIST_SUBSCRIPTION_BASE_RUPEES} + 18% GST = Rs.${ARTIST_SUBSCRIPTION_AMOUNT_RUPEES} for ${ARTIST_SUBSCRIPTION_DURATION_MONTHS} months. Later renewal: Rs.${ARTIST_SUBSCRIPTION_REGULAR_RUPEES} + GST.`;
 
 const buildSubscriptionReturnUrl = (uid: string) => {
+  const appOwnership = String((Constants as any)?.appOwnership ?? '').toLowerCase();
+  if (appOwnership !== 'expo') return `tatzo://payment?flow=subscription&uid=${encodeURIComponent(uid)}`;
+
   const hostUri =
     (Constants.expoConfig as any)?.hostUri ||
     (Constants as any)?.manifest?.debuggerHost ||
@@ -114,6 +119,8 @@ export const markSubscriptionPaidRazorpay = async (params: {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
+      flow: 'subscription',
+      uid,
       orderId: params.orderId,
       paymentId: params.paymentId,
       signature: params.signature,
@@ -126,20 +133,5 @@ export const markSubscriptionPaidRazorpay = async (params: {
     throw new Error('Subscription payment verification failed. Please retry.');
   }
 
-  // Spark-safe behavior:
-  // Frontend never activates subscription. It only marks payment as verification-pending.
-  await setSubscriptionState(uid, {
-    subscriptionStatus: 'inactive',
-    subscriptionPaymentStatus: 'processing',
-    subscriptionVerificationStatus: 'pending',
-    subscriptionVerificationRequestedAt: serverTimestamp(),
-    subscriptionLastError: '',
-    subscriptionPayment: {
-      provider: 'razorpay',
-      orderId: params.orderId,
-      paymentId: params.paymentId,
-      amount: ARTIST_SUBSCRIPTION_AMOUNT_RUPEES,
-      paidAt: serverTimestamp(),
-    },
-  });
+  // Trusted Function has already activated Pro after Razorpay signature verification. The client never activates Pro directly.
 };

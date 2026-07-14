@@ -1,6 +1,7 @@
 import { Share } from 'react-native';
 import { auth, db } from '../config/firebaseConfig';
 import {
+  writeBatch,
   collection,
   deleteDoc,
   doc,
@@ -15,6 +16,7 @@ import {
   where,
 } from 'firebase/firestore';
 import { writeNotificationDual } from './notifications';
+import { getArtistSettingsFromProfile, getArtistPublicVisibility } from './artistSettings';
 
 export type SocialNotificationType = 'like' | 'follow';
 
@@ -22,6 +24,9 @@ type ArtistIdentity = {
   uid?: string;
   displayName: string;
   handle?: string;
+  studioName?: string | null;
+  location?: string | null;
+  profileImageUrl?: string | null;
 };
 
 export const buildShareLink = (postId: string) => {
@@ -43,19 +48,49 @@ const resolveTargetUid = async (identity: ArtistIdentity): Promise<string | null
   if (identity.uid) return identity.uid;
 
   // With max privacy, resolve only from public artists collection.
-  const byDisplay = query(collection(db, 'artists'), where('displayName', '==', identity.displayName), limit(1));
-  const byArtistName = query(collection(db, 'artists'), where('artistName', '==', identity.displayName), limit(1));
+  const byDisplay = query(
+    collection(db, 'artists'),
+    where('verificationStatus', '==', 'approved'),
+    where('artistVisible', '==', true),
+    where('bookingVisible', '==', true),
+    where('displayName', '==', identity.displayName),
+    limit(1),
+  );
+  const byArtistName = query(
+    collection(db, 'artists'),
+    where('verificationStatus', '==', 'approved'),
+    where('artistVisible', '==', true),
+    where('bookingVisible', '==', true),
+    where('artistName', '==', identity.displayName),
+    limit(1),
+  );
   const [displaySnap, artistNameSnap] = await Promise.all([getDocs(byDisplay), getDocs(byArtistName)]);
-  if (displaySnap.docs.length) return displaySnap.docs[0].id;
-  if (artistNameSnap.docs.length) return artistNameSnap.docs[0].id;
+  const candidateDocs = [...displaySnap.docs, ...artistNameSnap.docs];
+  for (const candidate of candidateDocs) {
+    const data = candidate.data() as any;
+    const settings = getArtistSettingsFromProfile(data);
+    const discoverable =
+      String(data.verificationStatus ?? '') === 'approved' &&
+      data.artistVisible !== false &&
+      getArtistPublicVisibility(settings) &&
+      settings.privacy.bookingVisibility !== false;
+    if (discoverable) return candidate.id;
+  }
 
   const safeHandle = String(identity.handle ?? '')
     .trim()
     .replace(/^@/, '');
   if (safeHandle) {
-    const all = await getDocs(query(collection(db, 'artists'), limit(60)));
+    const all = await getDocs(query(collection(db, 'artists'), where('verificationStatus', '==', 'approved'), where('artistVisible', '==', true), where('bookingVisible', '==', true), limit(60)));
     const match = all.docs.find((row) => {
       const data = row.data() as any;
+      const settings = getArtistSettingsFromProfile(data);
+      const discoverable =
+        String(data.verificationStatus ?? '') === 'approved' &&
+        data.artistVisible !== false &&
+        getArtistPublicVisibility(settings) &&
+        settings.privacy.bookingVisibility !== false;
+      if (!discoverable) return false;
       const display = String(data.displayName ?? '').trim().toLowerCase();
       const artistName = String(data.artistName ?? '').trim().toLowerCase();
       const candidateHandle = (artistName || display).replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
@@ -65,6 +100,79 @@ const resolveTargetUid = async (identity: ArtistIdentity): Promise<string | null
   }
 
   return null;
+};
+
+export const toggleSavePost = async (params: { postId: string; postPreview?: string }) => {
+  const actor = auth.currentUser;
+  if (!actor) throw new Error('You must be signed in.');
+
+  const actorUid = actor.uid;
+  const saveRef = doc(db, 'users', actorUid, 'savedPosts', params.postId);
+  const postRef = doc(db, 'posts', params.postId);
+  const snap = await getDoc(saveRef);
+
+  if (snap.exists()) {
+    await deleteDoc(saveRef);
+    return { saved: false };
+  }
+
+  const postSnap = await getDoc(postRef);
+  if (!postSnap.exists()) {
+    throw new Error('Post not found.');
+  }
+  const post = postSnap.data() as any;
+  const artistUid = String(post.artistUid ?? '').trim();
+  await setDoc(
+    saveRef,
+    {
+      id: params.postId,
+      postId: params.postId,
+      artistUid,
+      artistName: String(post.artistName ?? '').trim() || 'Artist',
+      artistHandle: String(post.artistHandle ?? '').trim() || null,
+      artistLocation: String(post.artistLocation ?? '').trim() || null,
+      artistProfileImageUrl: String(post.artistProfileImageUrl ?? '').trim() || null,
+      caption: String(post.caption ?? '').trim() || null,
+      imageUrl: String(post.imageUrl ?? '').trim() || null,
+      videoUrl: String(post.videoUrl ?? '').trim() || null,
+      tags: Array.isArray(post.tags) ? post.tags : [],
+      savedAt: serverTimestamp(),
+    },
+    { merge: true },
+  );
+
+  return { saved: true };
+};
+
+export const toggleBlockUser = async (params: { blockedUid: string; blockedName?: string; blockedProfileImageUrl?: string }) => {
+  const actor = auth.currentUser;
+  if (!actor) throw new Error('You must be signed in.');
+
+  const actorUid = actor.uid;
+  const blockedUid = String(params.blockedUid ?? '').trim();
+  if (!blockedUid) throw new Error('Missing blocked user.');
+
+  const blockRef = doc(db, 'users', actorUid, 'blockedUsers', blockedUid);
+  const snap = await getDoc(blockRef);
+
+  if (snap.exists()) {
+    await deleteDoc(blockRef);
+    return { blocked: false };
+  }
+
+  await setDoc(
+    blockRef,
+    {
+      id: blockedUid,
+      blockedUid,
+      blockedName: params.blockedName ?? null,
+      blockedProfileImageUrl: params.blockedProfileImageUrl ?? null,
+      blockedAt: serverTimestamp(),
+    },
+    { merge: true },
+  );
+
+  return { blocked: true };
 };
 
 const notificationDocId = (type: SocialNotificationType, params: { toUid: string; fromUid: string; postId?: string }) => {
@@ -81,16 +189,31 @@ export const toggleLike = async (params: { postId: string; artist: ArtistIdentit
   const targetUidPromise = resolveTargetUid(params.artist);
 
   const likeRef = doc(db, 'posts', params.postId, 'likes', actorUid);
+  const userLikeRef = doc(db, 'users', actorUid, 'likedPosts', params.postId);
   const postRef = doc(db, 'posts', params.postId);
-  const likeSnap = await getDoc(likeRef);
+  const [likeSnap, userLikeSnap] = await Promise.all([getDoc(likeRef), getDoc(userLikeRef).catch(() => null)]);
 
-  if (likeSnap.exists()) {
-    await deleteDoc(likeRef);
+  if (likeSnap.exists() || userLikeSnap?.exists()) {
+    const batch = writeBatch(db);
+    batch.delete(likeRef);
+    batch.delete(userLikeRef);
+    await batch.commit();
     await updateDoc(postRef, { likesCount: increment(-1), updatedAt: serverTimestamp() }).catch(() => {});
     return { liked: false, targetUid: params.artist.uid ?? null, likeDelta: -1 };
   }
 
-  await setDoc(likeRef, { uid: actorUid, createdAt: serverTimestamp() }, { merge: true });
+  const likePayload = {
+    uid: actorUid,
+    postId: params.postId,
+    artistUid: params.artist.uid ?? null,
+    artistName: params.artist.displayName,
+    postPreview: params.postPreview,
+    createdAt: serverTimestamp(),
+  };
+  const batch = writeBatch(db);
+  batch.set(likeRef, likePayload, { merge: true });
+  batch.set(userLikeRef, likePayload, { merge: true });
+  await batch.commit();
   await updateDoc(postRef, { likesCount: increment(1), updatedAt: serverTimestamp() }).catch(() => {});
   const targetUid = await targetUidPromise.catch(() => null);
   const notifId = targetUid ? notificationDocId('like', { toUid: targetUid, fromUid: actorUid, postId: params.postId }) : '';
@@ -145,7 +268,7 @@ export const sharePost = async (params: {
     shareRef,
     { uid: actorUid, link: postLink, createdAt: serverTimestamp() },
     { merge: true },
-  );
+  ).catch(() => {});
 
   const artistUid = await targetUidPromise.catch(() => null);
   return { shared: true, artistUid };
@@ -162,19 +285,58 @@ export const toggleFollow = async (params: { artist: ArtistIdentity }) => {
   if (!targetUid) return { following: false, targetUid: null };
 
   const followRef = doc(db, 'follows', `${actorUid}_${targetUid}`);
-  const followSnap = await getDoc(followRef);
+  const followingRef = doc(db, 'users', actorUid, 'following', targetUid);
+  const [followSnap, followingSnap] = await Promise.all([getDoc(followRef), getDoc(followingRef)]);
   const notifId = notificationDocId('follow', { toUid: targetUid, fromUid: actorUid });
 
-  if (followSnap.exists()) {
-    await deleteDoc(followRef);
+  if (followSnap.exists() || followingSnap.exists()) {
+    const batch = writeBatch(db);
+    batch.delete(followRef);
+    batch.delete(followingRef);
+    await batch.commit();
     return { following: false, targetUid };
   }
 
-  await setDoc(
+  const artistSnap = await getDoc(doc(db, 'artists', targetUid)).catch(() => null);
+  const artistData = artistSnap?.exists() ? (artistSnap.data() as any) : {};
+  const displayName = String(artistData.artistName ?? artistData.displayName ?? params.artist.displayName ?? 'Artist').trim() || 'Artist';
+  const studioName = String(artistData.studioName ?? artistData.shopName ?? params.artist.studioName ?? '').trim();
+  const location = String(
+    artistData.location ??
+      [artistData.locationArea, artistData.locationCity].filter(Boolean).join(', ') ??
+      params.artist.location ??
+      '',
+  ).trim();
+  const profileImageUrl = String(artistData.profileImageUrl ?? params.artist.profileImageUrl ?? '').trim();
+
+  const batch = writeBatch(db);
+  batch.set(
     followRef,
     { id: followRef.id, fromUid: actorUid, toUid: targetUid, createdAt: serverTimestamp() },
     { merge: true },
   );
+  batch.set(
+    followingRef,
+    {
+      id: targetUid,
+      uid: targetUid,
+      artistUid: targetUid,
+      fromUid: actorUid,
+      toUid: targetUid,
+      name: displayName,
+      artistName: displayName,
+      displayName,
+      studioName,
+      location,
+      profileImageUrl,
+      artistProfileImageUrl: profileImageUrl,
+      verified: String(artistData.verificationStatus ?? '') === 'approved' || artistData.verifiedPro === true,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    },
+    { merge: true },
+  );
+  await batch.commit();
 
   try {
     await writeNotificationDual({
@@ -198,13 +360,19 @@ export const toggleFollow = async (params: { artist: ArtistIdentity }) => {
 
 export const getPostLikeState = async (postId: string, uid: string) => {
   if (!postId || !uid) return false;
-  const snap = await getDoc(doc(db, 'posts', postId, 'likes', uid));
-  return snap.exists();
+  const [userLikeSnap, postLikeSnap] = await Promise.all([
+    getDoc(doc(db, 'users', uid, 'likedPosts', postId)).catch(() => null),
+    getDoc(doc(db, 'posts', postId, 'likes', uid)).catch(() => null),
+  ]);
+  return Boolean(userLikeSnap?.exists() || postLikeSnap?.exists());
 };
 
 export const getFollowState = async (targetUid: string | undefined, uid: string) => {
   const safeTarget = String(targetUid ?? '').trim();
   if (!safeTarget || !uid || safeTarget === uid) return false;
-  const snap = await getDoc(doc(db, 'follows', `${uid}_${safeTarget}`));
-  return snap.exists();
+  const [followingSnap, legacySnap] = await Promise.all([
+    getDoc(doc(db, 'users', uid, 'following', safeTarget)).catch(() => null),
+    getDoc(doc(db, 'follows', `${uid}_${safeTarget}`)).catch(() => null),
+  ]);
+  return Boolean(followingSnap?.exists() || legacySnap?.exists());
 };

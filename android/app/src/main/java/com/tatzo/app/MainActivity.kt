@@ -1,4 +1,4 @@
-package com.sunitha.tatzo
+package com.tatzo.app
 
 import android.os.Build
 import android.os.Bundle
