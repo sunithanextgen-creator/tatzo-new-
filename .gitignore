@@ -44,3 +44,20 @@ functions/.env
 functions/.env.*
 *firebase-adminsdk*.json
 *service-account*.json
+
+# Android build files
+android/.gradle/
+android/build/
+android/app/build/
+android/.cxx/
+android/app/.cxx/
+
+# iOS build files
+ios/build/
+ios/Pods/
+
+# Expo
+.expo-shared/
+
+# Metro cache
+.metro-cache/

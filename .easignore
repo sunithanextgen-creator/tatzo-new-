@@ -1,0 +1,16 @@
+node_modules
+admin-web/node_modules
+functions/node_modules
+
+android/app/build
+android/build
+android/.cxx
+android/app/.cxx
+
+admin-web/dist
+.expo
+.firebase
+audit-reports
+play-store-assets
+
+*.log
