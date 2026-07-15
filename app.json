@@ -26,7 +26,8 @@
         {
           "locationWhenInUsePermission": "Allow Tatzo to use your location to show nearby tattoo artists."
         }
-      ]
+      ],
+      "expo-build-properties"
     ],
     "icon": "./assets/icon.png",
     "ios": {
