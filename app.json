@@ -34,6 +34,7 @@
       "bundleIdentifier": "com.tatzo.app",
       "buildNumber": "1.0.7",
       "supportsTablet": false,
+      "googleServicesFile": "./GoogleService-Info.plist",
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "Allow Tatzo to use your location to show nearby tattoo artists.",
         "NSCameraUsageDescription": "Allow Tatzo to use your camera to upload profile, portfolio, and tattoo reference images.",
