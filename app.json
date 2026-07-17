@@ -21,14 +21,21 @@
       "**/*"
     ],
     "plugins": [
-      [
-        "expo-location",
-        {
-          "locationWhenInUsePermission": "Allow Tatzo to use your location to show nearby tattoo artists."
-        }
-      ],
-      "expo-build-properties"
-    ],
+  [
+    "expo-location",
+    {
+      "locationWhenInUsePermission": "Allow Tatzo to use your location to show nearby tattoo artists."
+    }
+  ],
+  [
+    "expo-build-properties",
+    {
+      "ios": {
+        "useFrameworks": "static"
+      }
+    }
+  ]
+],
     "icon": "./assets/icon.png",
     "ios": {
       "bundleIdentifier": "com.tatzo.app",
