@@ -28,12 +28,7 @@
     }
   ],
   [
-    "expo-build-properties",
-    {
-      "ios": {
-        "useFrameworks": "static"
-      }
-    }
+    "expo-build-properties"
   ]
 ],
     "icon": "./assets/icon.png",
