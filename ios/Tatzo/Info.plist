@@ -59,8 +59,6 @@
     <string>Allow Tatzo to save selected media if needed.</string>
     <key>NSPhotoLibraryUsageDescription</key>
     <string>Allow Tatzo to access photos and videos for posts, reels, portfolio, and tattoo references.</string>
-    <key>RCTNewArchEnabled</key>
-    <true/>
     <key>UILaunchStoryboardName</key>
     <string>SplashScreen</string>
     <key>UIRequiredDeviceCapabilities</key>
